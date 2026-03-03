@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+early_access: false
+
+tone_instructions: >-
+  Be concise and direct. Focus on correctness, security, and architectural
+  consistency. This is a Solana CLI that handles real funds — treat
+  protocol-layer changes with extra scrutiny.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  sequence_diagrams: true
+  changed_files_summary: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+    base_branches:
+      - "main"
+
+  path_filters:
+    - "!docs/**"
+    - "!.claude/**"
+    - "!.github/**"
+    - "!idl/**"
+    - "!uv.lock"
+
+  path_instructions:
+    - path: "src/pumpfun_cli/commands/**"
+      instructions: |
+        CLI layer (Typer). Rules:
+        - MUST NOT import from `protocol/` directly — only `core/`. Flag
+          any `from pumpfun_cli.protocol` as a layer violation.
+        - Use `render()` or `error()` for output. Flag bare `print()`.
+        - Wallet-decryption commands must catch `ValueError`.
+
+    - path: "src/pumpfun_cli/core/**"
+      instructions: |
+        Business logic layer. Rules:
+        - MUST NOT import from `commands/`. May import from `protocol/`.
+        - RpcClient must be closed in `finally` blocks. Flag unclosed clients.
+        - No floating-point arithmetic for lamport/token amounts.
+
+    - path: "src/pumpfun_cli/protocol/**"
+      instructions: |
+        CRITICAL — builds Solana transactions that move real funds.
+        - MUST NOT import from `commands/` or `core/`.
+        - Verify account keys in instructions are correct.
+        - Flag any hardcoded private keys or secrets.
+        - Flag TODO/FIXME/HACK comments.
+
+    - path: "src/pumpfun_cli/crypto.py"
+      instructions: |
+        Wallet encryption (AES-256-GCM + scrypt).
+        - Flag any reduction in encryption strength.
+        - Passwords must never be logged or stored in plaintext.
+
+    - path: "tests/**"
+      instructions: |
+        - Tests must use mocks for RPC calls, no real network.
+        - Flag hardcoded private keys or real wallet credentials.
+
+  tools:
+    ruff:
+      enabled: true
+    gitleaks:
+      enabled: true
+    semgrep:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: "auto"
+  issues:
+    scope: "auto"
+  pull_requests:
+    scope: "auto"

@@ -1,0 +1,47 @@
+{
+  "skill_name": "work-item",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "work on item 5",
+      "expected_output": "Should resolve item #5 (Pre-trade balance validation), read 1-investigate.md prompt, fill {{ITEM_NUMBER}} with 5 and {{ITEM_DESCRIPTION}} with the full item text, dispatch a general-purpose subagent with the filled prompt, then present investigation output and ask user to proceed/re-run/abort.",
+      "files": [],
+      "assertions": [
+        {"id": "A1", "text": "Correctly resolved to work item #5 (Pre-trade balance validation)", "type": "must_contain"},
+        {"id": "A2", "text": "Read the prompt template from prompts/1-investigate.md", "type": "must_contain"},
+        {"id": "A3", "text": "Filled {{ITEM_NUMBER}} with 5 and {{ITEM_DESCRIPTION}} with the full item text including Source, Problem, Proposed, Scope fields", "type": "must_contain"},
+        {"id": "A4", "text": "Dispatches a general-purpose subagent (not Explore or Plan)", "type": "must_contain"},
+        {"id": "A5", "text": "Presents a gate asking user to proceed, re-run, or abort", "type": "must_contain"},
+        {"id": "A6", "text": "Announces starting the pipeline for item #5", "type": "must_contain"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "next work item",
+      "expected_output": "Should read work-items.md, find item #5 as the next undone item (since #1-4 are all done), announce pipeline start, then proceed to Stage 1 investigation.",
+      "files": [],
+      "assertions": [
+        {"id": "A1", "text": "Correctly identified #5 as the next undone item by checking which items are marked Done", "type": "must_contain"},
+        {"id": "A2", "text": "Read the prompt template from prompts/1-investigate.md", "type": "must_contain"},
+        {"id": "A3", "text": "Filled {{ITEM_NUMBER}} with 5 and {{ITEM_DESCRIPTION}} with the full item text", "type": "must_contain"},
+        {"id": "A4", "text": "Dispatches a general-purpose subagent", "type": "must_contain"},
+        {"id": "A5", "text": "Presents a gate asking user to proceed, re-run, or abort", "type": "must_contain"},
+        {"id": "A6", "text": "Announces starting the pipeline for item #5", "type": "must_contain"}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "work on pre-trade balance validation",
+      "expected_output": "Should match the name to item #5, extract its full description, and start the pipeline with Stage 1 investigation.",
+      "files": [],
+      "assertions": [
+        {"id": "A1", "text": "Matched 'pre-trade balance validation' to work item #5 by name", "type": "must_contain"},
+        {"id": "A2", "text": "Read the prompt template from prompts/1-investigate.md", "type": "must_contain"},
+        {"id": "A3", "text": "Filled {{ITEM_NUMBER}} with 5 and {{ITEM_DESCRIPTION}} with the full item text", "type": "must_contain"},
+        {"id": "A4", "text": "Dispatches a general-purpose subagent", "type": "must_contain"},
+        {"id": "A5", "text": "Presents a gate asking user to proceed, re-run, or abort", "type": "must_contain"},
+        {"id": "A6", "text": "Announces starting the pipeline for item #5", "type": "must_contain"}
+      ]
+    }
+  ]
+}

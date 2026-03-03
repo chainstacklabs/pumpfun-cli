@@ -1,0 +1,61 @@
+name: Bug Report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      placeholder: Describe the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `pumpfun buy ...`
+        2. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should have happened?
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command that failed
+      placeholder: "pumpfun buy <mint> 0.1 --slippage 10"
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error output
+      description: Paste the full error. Use `--json` for structured output.
+      render: shell
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Trading (buy/sell)
+        - Wallet
+        - Token info/discovery
+        - Launch
+        - PumpSwap (graduated tokens)
+        - Config
+        - Other
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 15, Ubuntu 24.04, Windows 11"

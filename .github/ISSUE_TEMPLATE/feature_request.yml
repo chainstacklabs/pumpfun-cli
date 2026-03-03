@@ -1,0 +1,33 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      placeholder: What's missing or difficult?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      placeholder: How should it work?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Trading (buy/sell)
+        - Wallet
+        - Token info/discovery
+        - Launch
+        - PumpSwap (graduated tokens)
+        - Config
+        - CLI UX
+        - Other
