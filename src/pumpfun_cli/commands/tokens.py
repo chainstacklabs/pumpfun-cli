@@ -81,6 +81,7 @@ def graduating(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n"
 
 
 @app.command("recommended")
+@app.command("top", hidden=True)
 def recommended(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n", min=1)):
     """Recommended tokens by pump.fun."""
     tokens = asyncio.run(get_recommended_tokens(limit=limit))

@@ -180,6 +180,7 @@ def test_tokens_no_subcommand_shows_help():
         ("trending", []),
         ("new", []),
         ("graduating", []),
+        ("top", []),
         ("recommended", []),
         ("search", ["dog"]),
     ],
