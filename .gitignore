@@ -10,5 +10,6 @@ build/
 .coverage
 docs/*
 .claude/skills/evals/
+.claude/skills/review-pr/
 
 *.local.*
