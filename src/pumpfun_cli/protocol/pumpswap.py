@@ -2,15 +2,13 @@
 
 import struct
 
-from solana.rpc.types import MemcmpOpts
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
 
+from pumpfun_cli.protocol.address import derive_amm_pool
 from pumpfun_cli.protocol.client import RpcClient
 from pumpfun_cli.protocol.contracts import (
     GLOBALCONFIG_PROTOCOL_FEE_RECIPIENT_OFFSET,
-    POOL_BASE_MINT_OFFSET,
-    PUMP_AMM_PROGRAM,
     PUMP_SWAP_GLOBAL_CONFIG,
     STANDARD_PUMPSWAP_FEE_RECIPIENT,
     TOKEN_PROGRAM,
@@ -21,19 +19,19 @@ from pumpfun_cli.protocol.contracts import (
 async def get_pool_by_mint(client: RpcClient, mint: Pubkey) -> tuple[Pubkey, bytes]:
     """Find the PumpSwap pool for a given token mint.
 
+    Derives the pool address deterministically via PDA, then fetches
+    the account data with a single getAccountInfo call.
+
     Returns (pool_address, pool_data) or raises RuntimeError if not found.
     """
-    filters = [
-        MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=str(mint)),
-    ]
+    pool_address = derive_amm_pool(mint)
     try:
-        accounts = await client.get_program_accounts(PUMP_AMM_PROGRAM, filters)
+        resp = await client.get_account_info(pool_address)
     except Exception as exc:
-        raise RuntimeError(f"Failed to query PumpSwap pools for {mint}: {exc}") from exc
-    if not accounts:
+        raise RuntimeError(f"Failed to fetch PumpSwap pool {pool_address}: {exc}") from exc
+    if not resp.value:
         raise RuntimeError(f"No PumpSwap pool found for {mint}")
-    pool_account = accounts[0]
-    return pool_account.pubkey, bytes(pool_account.account.data)
+    return pool_address, bytes(resp.value.data)
 
 
 def parse_pool_data(data: bytes) -> dict:

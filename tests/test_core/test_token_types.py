@@ -419,10 +419,9 @@ async def test_pumpswap_buy_passes_token_program():
     struct.pack_into("<Q", pool_data, 203, 1_000_000)
     pool_data[211:243] = user
 
-    pool_account = MagicMock()
-    pool_account.pubkey = Pubkey.from_string("11111111111111111111111111111114")
-    pool_account.account = MagicMock()
-    pool_account.account.data = bytes(pool_data)
+    pool_resp = MagicMock()
+    pool_resp.value = MagicMock()
+    pool_resp.value.data = bytes(pool_data)
 
     off = GLOBALCONFIG_PROTOCOL_FEE_RECIPIENT_OFFSET
     config_data = bytearray(off + 32)
@@ -441,8 +440,8 @@ async def test_pumpswap_buy_passes_token_program():
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
-        client.get_account_info.side_effect = [tp_resp, gc_resp, vol_resp]
+        # get_account_info calls: pool, token_program, GlobalConfig, vol_accumulator
+        client.get_account_info.side_effect = [pool_resp, tp_resp, gc_resp, vol_resp]
         client.get_token_account_balance.side_effect = [1_000_000_000, 30_000_000_000]
         client.get_balance.return_value = 10_000_000_000
         client.send_tx.return_value = "ps_sig"

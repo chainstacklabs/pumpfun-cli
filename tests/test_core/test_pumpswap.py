@@ -63,13 +63,19 @@ def _build_pool_data():
     return bytes(data)
 
 
-def _mock_pool_account(pool_data):
-    """Build a mock account for get_program_accounts return."""
-    account = MagicMock()
-    account.pubkey = Pubkey.from_string("11111111111111111111111111111114")
-    account.account = MagicMock()
-    account.account.data = pool_data
-    return account
+def _mock_pool_resp(pool_data):
+    """Build a mock get_account_info response for a pool account."""
+    resp = MagicMock()
+    resp.value = MagicMock()
+    resp.value.data = pool_data
+    return resp
+
+
+def _mock_pool_not_found():
+    """Build a mock get_account_info response for pool not found."""
+    resp = MagicMock()
+    resp.value = None
+    return resp
 
 
 # --- invalid mint tests ---
@@ -116,7 +122,8 @@ async def test_buy_pumpswap_no_pool(tmp_keystore):
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = []
+        # Pool lookup via get_account_info returns not found
+        client.get_account_info.return_value = _mock_pool_not_found()
         client.close = AsyncMock()
 
         result = await buy_pumpswap(
@@ -149,14 +156,13 @@ def _mock_vol_accumulator_resp():
 @pytest.mark.asyncio
 async def test_buy_pumpswap_no_liquidity(tmp_keystore):
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
-        # get_account_info calls: token_program, fee_recipients(GlobalConfig), vol_accumulator
+        # get_account_info calls: pool, token_program, GlobalConfig
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -178,14 +184,13 @@ async def test_buy_pumpswap_no_liquidity(tmp_keystore):
 @pytest.mark.asyncio
 async def test_buy_pumpswap_success(tmp_keystore):
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
-        # get_account_info calls: token_program, GlobalConfig, vol_accumulator
+        # get_account_info calls: pool, token_program, GlobalConfig, vol_accumulator
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
             _mock_vol_accumulator_resp(),
@@ -212,14 +217,13 @@ async def test_buy_pumpswap_success(tmp_keystore):
 @pytest.mark.asyncio
 async def test_sell_pumpswap_no_tokens(tmp_keystore):
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
-        # get_account_info calls: token_program, GlobalConfig
+        # get_account_info calls: pool, token_program, GlobalConfig
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -240,14 +244,13 @@ async def test_sell_pumpswap_no_tokens(tmp_keystore):
 @pytest.mark.asyncio
 async def test_sell_pumpswap_success(tmp_keystore):
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
-        # get_account_info calls: token_program, GlobalConfig
+        # get_account_info calls: pool, token_program, GlobalConfig
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -272,12 +275,12 @@ async def test_sell_pumpswap_success(tmp_keystore):
 @pytest.mark.asyncio
 async def test_get_pumpswap_info_success():
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
+        # get_account_info calls: pool
+        client.get_account_info.return_value = _mock_pool_resp(pool_data)
         # get_pool_balances called once, used for both price and reserves
         client.get_token_account_balance.side_effect = [
             1_000_000_000,
@@ -299,7 +302,7 @@ async def test_get_pumpswap_info_no_pool():
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = []
+        client.get_account_info.return_value = _mock_pool_not_found()
         client.close = AsyncMock()
 
         result = await get_pumpswap_info(
@@ -313,13 +316,12 @@ async def test_get_pumpswap_info_no_pool():
 async def test_buy_pumpswap_custom_priority_fee(tmp_keystore):
     """Custom priority_fee and compute_units are forwarded to send_tx."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
             _mock_vol_accumulator_resp(),
@@ -348,13 +350,12 @@ async def test_buy_pumpswap_custom_priority_fee(tmp_keystore):
 async def test_sell_pumpswap_custom_priority_fee(tmp_keystore):
     """Custom priority_fee and compute_units are forwarded to send_tx for sell."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -381,13 +382,12 @@ async def test_sell_pumpswap_custom_priority_fee(tmp_keystore):
 async def test_buy_pumpswap_dry_run(tmp_keystore):
     """dry_run=True returns simulation dict without calling send_tx."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -420,13 +420,12 @@ async def test_buy_pumpswap_dry_run(tmp_keystore):
 async def test_sell_pumpswap_dry_run(tmp_keystore):
     """dry_run=True returns simulation dict without calling send_tx."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -456,13 +455,12 @@ async def test_sell_pumpswap_dry_run(tmp_keystore):
 async def test_buy_pumpswap_slippage_zero(tmp_keystore):
     """Buy with slippage=0 means min_base_amount_out == estimated_tokens."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
             _mock_vol_accumulator_resp(),
@@ -502,13 +500,12 @@ async def test_buy_pumpswap_slippage_zero(tmp_keystore):
 async def test_sell_pumpswap_partial_amount(tmp_keystore):
     """Sell a specific token amount (not 'all') — should NOT query user balance."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -543,13 +540,12 @@ async def test_sell_pumpswap_partial_amount(tmp_keystore):
 async def test_buy_pumpswap_insufficient_sol(tmp_keystore):
     """Buy with wallet balance too low returns insufficient_balance."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -576,13 +572,12 @@ async def test_buy_pumpswap_insufficient_sol(tmp_keystore):
 async def test_sell_pumpswap_insufficient_tokens(tmp_keystore):
     """Sell specific amount exceeding token balance returns insufficient_balance."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -612,13 +607,12 @@ async def test_sell_pumpswap_insufficient_tokens(tmp_keystore):
 async def test_buy_pumpswap_sufficient_sol_proceeds(tmp_keystore):
     """Buy with adequate balance proceeds normally (regression guard)."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
             _mock_vol_accumulator_resp(),
@@ -646,13 +640,12 @@ async def test_buy_pumpswap_sufficient_sol_proceeds(tmp_keystore):
 async def test_buy_pumpswap_dry_run_insufficient_sol_includes_warning(tmp_keystore):
     """Dry-run with low balance still returns simulation but includes balance_warning."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
         ]
@@ -678,13 +671,12 @@ async def test_buy_pumpswap_dry_run_insufficient_sol_includes_warning(tmp_keysto
 async def test_buy_pumpswap_without_confirm(tmp_keystore):
     """Buy without confirm=True — result should NOT contain 'confirmed' key."""
     pool_data = _build_pool_data()
-    pool_account = _mock_pool_account(pool_data)
 
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = [pool_account]
         client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
             _mock_token_program_resp(),
             _mock_global_config_resp(),
             _mock_vol_accumulator_resp(),
@@ -715,7 +707,7 @@ async def test_get_pumpswap_info_uses_30s_default_timeout():
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        client.get_program_accounts.return_value = []
+        client.get_account_info.return_value = _mock_pool_not_found()
         client.close = AsyncMock()
 
         await get_pumpswap_info("http://rpc", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")

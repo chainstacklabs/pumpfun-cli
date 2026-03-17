@@ -745,8 +745,9 @@ def build_close_volume_accumulator_instruction(
 
 def _derive_migrate_pool_authority(mint: Pubkey) -> Pubkey:
     """Derive the pool authority PDA for migration."""
-    addr, _ = Pubkey.find_program_address([b"pool-authority", bytes(mint)], PUMP_PROGRAM)
-    return addr
+    from pumpfun_cli.protocol.address import derive_pool_authority
+
+    return derive_pool_authority(mint)
 
 
 def build_migrate_instruction(
