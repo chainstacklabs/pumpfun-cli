@@ -110,6 +110,21 @@ def active_mint():
 
 
 @pytest.fixture(scope="session")
+def cashback_mint():
+    """Return a cashback-enabled bonding curve token for testing.
+
+    Override with SURFPOOL_CASHBACK_MINT env var.
+    """
+    mint = os.environ.get("SURFPOOL_CASHBACK_MINT")
+    if not mint:
+        pytest.skip(
+            "Set SURFPOOL_CASHBACK_MINT=<mint_address> to a cashback-enabled "
+            "bonding curve token on mainnet"
+        )
+    return mint
+
+
+@pytest.fixture(scope="session")
 def graduated_mint():
     """Return a graduated pump.fun token mint (on PumpSwap AMM).
 
