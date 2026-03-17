@@ -19,6 +19,12 @@ def launch(
 ):
     """Launch a new token on pump.fun (create_v2 + extend_account)."""
     state = ctx.obj
+    if not name or not name.strip():
+        error("Token name cannot be empty.")
+    if not ticker or not ticker.strip():
+        error("Token ticker cannot be empty.")
+    if not desc or not desc.strip():
+        error("Token description cannot be empty.")
     if not state or not state.rpc:
         error("RPC endpoint not configured.", hint="Run: pumpfun config set rpc <url>")
 
