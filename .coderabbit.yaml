@@ -1,33 +1,149 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 
+# Review language for all AI-generated text
 language: "en-US"
+
+# Disable beta features — only use stable, proven functionality
 early_access: false
 
+# Global tone for all review comments — keeps feedback focused on what
+# matters most for a financial CLI: correctness and security
 tone_instructions: >-
   Be concise and direct. Focus on correctness, security, and architectural
   consistency. This is a Solana CLI that handles real funds — treat
   protocol-layer changes with extra scrutiny.
 
 reviews:
+  # "assertive" = thorough, flags more issues. Alternative "chill" would
+  # skip minor issues — too lenient for a project handling real funds
   profile: "assertive"
-  request_changes_workflow: false
+
+  # KEY GATE: When true, CodeRabbit submits a "Request Changes" review on
+  # new PRs. It auto-approves only after ALL its comments are resolved.
+  # This makes CodeRabbit a blocking gate — contributors must address all
+  # feedback before the maintainer even looks at the PR.
+  request_changes_workflow: true
+
+  # Include a high-level summary at the top of each review — gives the
+  # maintainer a quick overview without reading every file change
   high_level_summary: true
+
+  # No poem at the end of reviews — keep output professional
   poem: false
+
+  # Show review status (pending/done) in the PR — lets contributors know
+  # when CodeRabbit is still processing
   review_status: true
+
+  # Collapse the file-by-file walkthrough by default — reduces noise in
+  # the PR conversation, expandable when needed
   collapse_walkthrough: true
+
+  # Auto-generate sequence diagrams for complex flows — helps visualize
+  # how new code interacts with existing transaction/RPC flows
   sequence_diagrams: true
+
+  # Show a table of all changed files with brief descriptions — quick
+  # reference for the maintainer to see scope at a glance
   changed_files_summary: true
 
+  # Pre-merge checks create GitHub commit statuses that can block merge
+  # via branch protection. Each check runs as an AI analysis pass.
+  pre_merge_checks:
+    # Validate PR title matches conventional commits — redundant with
+    # pr-title.yml CI but acts as a second safety net within CodeRabbit
+    title:
+      mode: "error"
+      requirements: "Must follow conventional commits: feat|fix|chore|docs|style|test|ci|refactor|perf"
+    # Warn if PR description is missing/empty — encourages contributors
+    # to explain what changed and why
+    description:
+      mode: "warning"
+    # Custom AI-powered checks that run on every PR diff
+    custom_checks:
+      # Core repo rule: all CLI output must go through render()/error().
+      # print() bypasses JSON mode and TTY detection. "error" = blocks merge.
+      - name: "No print() calls"
+        mode: "error"
+        instructions: |
+          Fail if any changed Python file in src/ uses bare print() instead of
+          render() or error() from pumpfun_cli.output.
+      # Core architecture rule: commands/ layer must not reach into protocol/
+      # directly — always go through core/ for business logic. "error" = blocks merge.
+      - name: "Layer separation"
+        mode: "error"
+        instructions: |
+          Fail if any file in src/pumpfun_cli/commands/ imports directly from
+          pumpfun_cli.protocol. Commands must only import from core.
+      # RpcClient is stateless and must be closed to avoid connection leaks.
+      # "warning" = doesn't block, but flags it for attention.
+      - name: "RpcClient cleanup"
+        mode: "warning"
+        instructions: |
+          Warn if any new RpcClient usage lacks a finally block that calls .close().
+
+  # "Finishing touches" are optional one-click actions shown as checkboxes
+  # in the review walkthrough. Contributors or maintainer can trigger them.
+  finishing_touches:
+    # "Simplify" reviews code for reuse opportunities, quality improvements,
+    # and unnecessary complexity — a free code quality pass
+    simplify:
+      enabled: true
+
+  # Customizes what the high-level summary focuses on. Without this,
+  # CodeRabbit generates a generic summary. This steers it toward the
+  # things that matter most: fund safety, architecture, and security.
+  high_level_summary_instructions: |
+    Focus on: (1) whether protocol/ code that handles real funds is affected,
+    (2) architectural layer violations, (3) security implications for wallet
+    handling or transaction construction. Always mention if the PR touches
+    code paths that send Solana transactions.
+
+  # Auto-suggest labels based on which directories are touched — gives the
+  # maintainer instant visual triage without reading the file list
+  suggested_labels: true
+  # Actually apply the labels (not just suggest) — saves a manual step
+  auto_apply_labels: true
+  # Label definitions map directory patterns to labels. Each label
+  # corresponds to an architectural layer or concern area.
+  labeling_instructions:
+    - label: "protocol"
+      instructions: "Apply when files in src/pumpfun_cli/protocol/ are changed"
+    - label: "security"
+      instructions: "Apply when crypto.py, wallet-related code, or transaction construction code is changed"
+    - label: "cli"
+      instructions: "Apply when files in src/pumpfun_cli/commands/ are changed"
+    - label: "core"
+      instructions: "Apply when files in src/pumpfun_cli/core/ are changed"
+    - label: "tests"
+      instructions: "Apply when files in tests/ are changed"
+    - label: "ci"
+      instructions: "Apply when files in .github/workflows/ or Makefile are changed"
+
   auto_review:
+    # Master switch for automatic reviews on new PRs/pushes
     enabled: true
+    # Skip draft PRs — they're work-in-progress, reviewing wastes cycles
     drafts: false
+    # Review only the new changes on subsequent pushes, not the entire PR
+    # again — reduces noise and review fatigue
     auto_incremental_review: true
+    # Skip PRs with these keywords in the title — "WIP" and "DO NOT MERGE"
+    # signal the contributor isn't ready for review yet
     ignore_title_keywords:
       - "WIP"
       - "DO NOT MERGE"
-    base_branches:
-      - "main"
+    # Skip PRs from dependency bots — their PRs are auto-generated and
+    # don't need AI code review (CI tests are sufficient)
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+    # NOTE: base_branches is intentionally omitted (was ["main"]).
+    # PRs may target feature branches, not just main. Omitting this
+    # means CodeRabbit reviews PRs targeting any branch.
 
+  # Exclude files/dirs that don't need code review — docs, config,
+  # on-chain IDL (source of truth), and lockfiles
   path_filters:
     - "!docs/**"
     - "!.claude/**"
@@ -35,6 +151,8 @@ reviews:
     - "!idl/**"
     - "!uv.lock"
 
+  # Per-path review instructions — these teach CodeRabbit the project's
+  # architectural rules so it can enforce them contextually per layer
   path_instructions:
     - path: "src/pumpfun_cli/commands/**"
       instructions: |
@@ -70,22 +188,41 @@ reviews:
         - Tests must use mocks for RPC calls, no real network.
         - Flag hardcoded private keys or real wallet credentials.
 
+  # Static analysis tools that run on every PR alongside the AI review
   tools:
+    # Python linter/formatter — catches style issues, import ordering,
+    # and common bugs. Matches the project's local ruff config.
     ruff:
       enabled: true
+    # Secret scanner — detects accidentally committed API keys, private
+    # keys, passwords. Critical for a crypto wallet CLI.
     gitleaks:
       enabled: true
+    # Semantic static analysis — pattern-based security rules for Python.
+    # Catches injection, crypto misuse, and other OWASP issues.
     semgrep:
       enabled: true
+    # Shell script linter — catches bugs in scripts/ directory
+    # (surfpool-test.sh, mainnet-test.sh, etc.)
+    shellcheck:
+      enabled: true
 
+# Auto-reply to PR comments without requiring @coderabbitai mention —
+# contributors can ask questions or discuss review comments naturally
 chat:
   auto_reply: true
 
+# Knowledge base lets CodeRabbit learn from past reviews and apply that
+# knowledge to future PRs — builds institutional memory over time
 knowledge_base:
+  # Don't opt out of the knowledge base — we want CodeRabbit to learn
   opt_out: false
+  # "auto" scope = learn from this repo's reviews automatically
   learnings:
     scope: "auto"
+  # Cross-reference related issues when reviewing PRs
   issues:
     scope: "auto"
+  # Cross-reference related PRs when reviewing new ones
   pull_requests:
     scope: "auto"
