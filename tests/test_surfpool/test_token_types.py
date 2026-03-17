@@ -54,6 +54,7 @@ async def test_buy_then_sell_cashback_token(
         sol_amount=0.001,
         slippage=25,
         confirm=True,
+        compute_units=200_000,
     )
     assert "error" not in buy_result, f"Buy failed: {buy_result}"
 
@@ -64,6 +65,7 @@ async def test_buy_then_sell_cashback_token(
         mint_str=cashback_mint,
         amount_str="all",
         slippage=25,
+        compute_units=200_000,
     )
     assert "error" not in sell_result, f"Sell cashback token failed: {sell_result}"
     assert sell_result["action"] == "sell"
