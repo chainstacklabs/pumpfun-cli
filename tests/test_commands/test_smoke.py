@@ -3,6 +3,7 @@
 import json
 import re
 
+import pytest
 from typer.testing import CliRunner
 
 from pumpfun_cli.cli import app
@@ -170,3 +171,24 @@ def test_tokens_no_subcommand_shows_help():
     """Bare 'tokens' with no subcommand exits 0 and shows help."""
     result = runner.invoke(app, ["tokens"])
     assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("limit", ["0", "-1"])
+@pytest.mark.parametrize(
+    ("subcommand", "extra_args"),
+    [
+        ("trending", []),
+        ("new", []),
+        ("graduating", []),
+        ("recommended", []),
+        ("search", ["dog"]),
+    ],
+)
+def test_tokens_limit_must_be_at_least_one(limit, subcommand, extra_args):
+    """Token listing commands reject zero and negative limits before execution."""
+    result = runner.invoke(app, ["tokens", subcommand, *extra_args, "--limit", limit])
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    assert "Invalid value for" in output
+    assert "--limit" in output

@@ -60,28 +60,28 @@ def _display_tokens(ctx: typer.Context, tokens: list[dict]):
 
 
 @app.command("trending")
-def trending(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n")):
+def trending(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n", min=1)):
     """Top runners + recommended tokens."""
     tokens = asyncio.run(get_trending_tokens(limit=limit))
     _display_tokens(ctx, tokens)
 
 
 @app.command("new")
-def new(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n")):
+def new(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n", min=1)):
     """Recently launched tokens."""
     tokens = asyncio.run(get_new_tokens(limit=limit))
     _display_tokens(ctx, tokens)
 
 
 @app.command("graduating")
-def graduating(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n")):
+def graduating(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n", min=1)):
     """Tokens near bonding curve completion."""
     tokens = asyncio.run(get_graduating_tokens(limit=limit))
     _display_tokens(ctx, tokens)
 
 
 @app.command("recommended")
-def recommended(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n")):
+def recommended(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n", min=1)):
     """Recommended tokens by pump.fun."""
     tokens = asyncio.run(get_recommended_tokens(limit=limit))
     _display_tokens(ctx, tokens)
@@ -91,7 +91,7 @@ def recommended(ctx: typer.Context, limit: int = typer.Option(20, "--limit", "-n
 def search(
     ctx: typer.Context,
     query: str = typer.Argument(...),
-    limit: int = typer.Option(20, "--limit", "-n"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1),
 ):
     """Search tokens by keyword."""
     tokens = asyncio.run(search_tokens(query, limit=limit))
