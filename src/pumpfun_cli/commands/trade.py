@@ -43,6 +43,12 @@ def _validate_mint(mint: str):
         error("Invalid mint address.", hint="Provide a valid base58 Solana address.")
 
 
+def _validate_slippage(slippage: int) -> None:
+    """Validate slippage is between 0 and 100, or exit with error."""
+    if slippage < 0 or slippage > 100:
+        error("Slippage must be between 0 and 100.", hint=f"Got: {slippage}")
+
+
 def _require_rpc_and_wallet(ctx: typer.Context) -> tuple:
     """Return (rpc, keyfile, password) or exit with error."""
     state = ctx.obj
@@ -76,6 +82,7 @@ def buy(
 ):
     """Buy tokens with SOL."""
     _validate_mint(mint)
+    _validate_slippage(slippage)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
@@ -164,6 +171,7 @@ def sell(
 ):
     """Sell tokens for SOL."""
     _validate_mint(mint)
+    _validate_slippage(slippage)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:

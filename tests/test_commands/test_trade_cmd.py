@@ -451,6 +451,170 @@ def test_sell_insufficient_balance_json(tmp_path, monkeypatch):
     assert "Insufficient" in result.output
 
 
+def test_buy_slippage_negative():
+    """Buy with negative slippage exits with error."""
+    result = runner.invoke(
+        app, ["--rpc", "https://fake.rpc", "buy", "--slippage", "-5", _FAKE_MINT, "0.01"]
+    )
+    assert result.exit_code != 0
+    assert "Slippage must be between 0 and 100" in result.output
+
+
+def test_buy_slippage_above_100():
+    """Buy with slippage above 100 exits with error."""
+    result = runner.invoke(
+        app, ["--rpc", "https://fake.rpc", "buy", "--slippage", "999", _FAKE_MINT, "0.01"]
+    )
+    assert result.exit_code != 0
+    assert "Slippage must be between 0 and 100" in result.output
+
+
+def test_sell_slippage_negative():
+    """Sell with negative slippage exits with error."""
+    result = runner.invoke(
+        app, ["--rpc", "https://fake.rpc", "sell", "--slippage", "-5", _FAKE_MINT, "all"]
+    )
+    assert result.exit_code != 0
+    assert "Slippage must be between 0 and 100" in result.output
+
+
+def test_sell_slippage_above_100():
+    """Sell with slippage above 100 exits with error."""
+    result = runner.invoke(
+        app, ["--rpc", "https://fake.rpc", "sell", "--slippage", "999", _FAKE_MINT, "all"]
+    )
+    assert result.exit_code != 0
+    assert "Slippage must be between 0 and 100" in result.output
+
+
+def test_buy_slippage_zero(tmp_path, monkeypatch):
+    """Buy with slippage=0 is valid (boundary)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy:
+        mock_buy.return_value = {
+            "action": "buy",
+            "mint": _FAKE_MINT,
+            "sol_spent": 0.01,
+            "tokens_received": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "buy", "--slippage", "0", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 0
+    assert "Slippage must be between" not in result.output
+
+
+def test_buy_slippage_100(tmp_path, monkeypatch):
+    """Buy with slippage=100 is valid (boundary)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy:
+        mock_buy.return_value = {
+            "action": "buy",
+            "mint": _FAKE_MINT,
+            "sol_spent": 0.01,
+            "tokens_received": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "buy", "--slippage", "100", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 0
+    assert "Slippage must be between" not in result.output
+
+
+def test_sell_slippage_zero(tmp_path, monkeypatch):
+    """Sell with slippage=0 is valid (boundary)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell:
+        mock_sell.return_value = {
+            "action": "sell",
+            "mint": _FAKE_MINT,
+            "sol_received": 0.01,
+            "tokens_sold": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "sell", "--slippage", "0", _FAKE_MINT, "all"],
+        )
+
+    assert result.exit_code == 0
+    assert "Slippage must be between" not in result.output
+
+
+def test_sell_slippage_100(tmp_path, monkeypatch):
+    """Sell with slippage=100 is valid (boundary)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell:
+        mock_sell.return_value = {
+            "action": "sell",
+            "mint": _FAKE_MINT,
+            "sol_received": 0.01,
+            "tokens_sold": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "sell", "--slippage", "100", _FAKE_MINT, "all"],
+        )
+
+    assert result.exit_code == 0
+    assert "Slippage must be between" not in result.output
+
+
 def test_buy_json_output_has_expected_keys(tmp_path, monkeypatch):
     """Verify JSON buy output has all expected keys."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
