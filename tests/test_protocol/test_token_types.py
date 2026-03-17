@@ -35,9 +35,7 @@ _CREATOR = Pubkey.from_string("11111111111111111111111111111113")
 _BC = derive_bonding_curve(_MINT)
 
 
-# ---------------------------------------------------------------------------
 # BC-BUY: Bonding curve buy — all token type combinations
-# ---------------------------------------------------------------------------
 
 
 class TestBondingCurveBuyTokenTypes:
@@ -132,9 +130,7 @@ class TestBondingCurveBuyTokenTypes:
         assert ixs[-1].accounts[1].pubkey == PUMP_MAYHEM_FEE
 
 
-# ---------------------------------------------------------------------------
 # BC-SELL: Bonding curve sell — cashback and non-cashback
-# ---------------------------------------------------------------------------
 
 
 class TestBondingCurveSellTokenTypes:
@@ -210,9 +206,7 @@ class TestBondingCurveSellTokenTypes:
         assert sell_ix.accounts[9].pubkey == TOKEN_PROGRAM
 
 
-# ---------------------------------------------------------------------------
 # ATA derivation: Token-2022 vs SPL produce different addresses
-# ---------------------------------------------------------------------------
 
 
 class TestATADerivation:
@@ -233,9 +227,7 @@ class TestATADerivation:
         assert abc_2022 != abc_spl
 
 
-# ---------------------------------------------------------------------------
 # Sell instruction data: verify no track_volume leakage into wrong field
-# ---------------------------------------------------------------------------
 
 
 class TestSellInstructionData:
