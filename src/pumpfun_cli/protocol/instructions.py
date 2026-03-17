@@ -743,13 +743,6 @@ def build_close_volume_accumulator_instruction(
     )
 
 
-def _derive_migrate_pool_authority(mint: Pubkey) -> Pubkey:
-    """Derive the pool authority PDA for migration."""
-    from pumpfun_cli.protocol.address import derive_pool_authority
-
-    return derive_pool_authority(mint)
-
-
 def build_migrate_instruction(
     idl: IDLParser,
     mint: Pubkey,
@@ -763,11 +756,12 @@ def build_migrate_instruction(
     from pumpfun_cli.protocol.address import (
         derive_associated_bonding_curve,
         derive_bonding_curve,
+        derive_pool_authority,
     )
 
     bonding_curve = derive_bonding_curve(mint)
     assoc_bc = derive_associated_bonding_curve(mint, bonding_curve, TOKEN_2022_PROGRAM)
-    pool_authority = _derive_migrate_pool_authority(mint)
+    pool_authority = derive_pool_authority(mint)
 
     # Derive pool PDA on AMM program: seeds = [b"pool", [0,0], pool_authority, mint, wsol_mint]
     pool, _ = Pubkey.find_program_address(

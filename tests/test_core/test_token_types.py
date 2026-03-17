@@ -22,17 +22,6 @@ _MINT_STR = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 _CREATOR_BYTES = bytes(Pubkey.from_string("11111111111111111111111111111112"))
 
 
-@pytest.fixture
-def tmp_keystore(tmp_path):
-    from solders.keypair import Keypair
-
-    from pumpfun_cli.crypto import encrypt_keypair
-
-    keyfile = tmp_path / "wallet.enc"
-    encrypt_keypair(Keypair(), "testpass", keyfile)
-    return str(keyfile)
-
-
 def _bc_state(
     *,
     is_mayhem: bool = False,
@@ -382,46 +371,20 @@ async def test_sell_graduated_token_error(tmp_keystore):
 
 
 @pytest.mark.asyncio
-async def test_pumpswap_buy_passes_token_program():
+async def test_pumpswap_buy_passes_token_program(tmp_keystore):
     """PS-BUY-1/PS-BUY-2: PumpSwap buy forwards detected token_program."""
-    import os
-    import struct
-    import tempfile
-
-    from solders.keypair import Keypair
-
     from pumpfun_cli.core.pumpswap import buy_pumpswap
-    from pumpfun_cli.crypto import encrypt_keypair
     from pumpfun_cli.protocol.contracts import (
         GLOBALCONFIG_PROTOCOL_FEE_RECIPIENT_OFFSET,
         STANDARD_PUMPSWAP_FEE_RECIPIENT,
     )
+    from tests.test_core.helpers import build_pool_data
 
-    td = tempfile.mkdtemp()
-    keyfile = os.path.join(td, "wallet.enc")
-    encrypt_keypair(Keypair(), "testpass", keyfile)
-
-    user = bytes(Pubkey.from_string("11111111111111111111111111111112"))
-    mint = bytes(Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"))
-    wsol = bytes(Pubkey.from_string("So11111111111111111111111111111111111111112"))
-    filler = bytes(Pubkey.from_string("11111111111111111111111111111113"))
-
-    pool_data = bytearray(243)
-    pool_data[0:8] = b"\x00" * 8
-    pool_data[8] = 255
-    struct.pack_into("<H", pool_data, 9, 1)
-    pool_data[11:43] = user
-    pool_data[43:75] = mint
-    pool_data[75:107] = wsol
-    pool_data[107:139] = filler
-    pool_data[139:171] = filler
-    pool_data[171:203] = filler
-    struct.pack_into("<Q", pool_data, 203, 1_000_000)
-    pool_data[211:243] = user
+    pool_data = build_pool_data()
 
     pool_resp = MagicMock()
     pool_resp.value = MagicMock()
-    pool_resp.value.data = bytes(pool_data)
+    pool_resp.value.data = pool_data
 
     off = GLOBALCONFIG_PROTOCOL_FEE_RECIPIENT_OFFSET
     config_data = bytearray(off + 32)
@@ -440,14 +403,13 @@ async def test_pumpswap_buy_passes_token_program():
     with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
         client = AsyncMock()
         MockClient.return_value = client
-        # get_account_info calls: pool, token_program, GlobalConfig, vol_accumulator
         client.get_account_info.side_effect = [pool_resp, tp_resp, gc_resp, vol_resp]
         client.get_token_account_balance.side_effect = [1_000_000_000, 30_000_000_000]
         client.get_balance.return_value = 10_000_000_000
         client.send_tx.return_value = "ps_sig"
         client.close = AsyncMock()
 
-        result = await buy_pumpswap("http://rpc", keyfile, "testpass", _MINT_STR, 0.01)
+        result = await buy_pumpswap("http://rpc", tmp_keystore, "testpass", _MINT_STR, 0.01)
 
     assert result["action"] == "buy"
     assert result["venue"] == "pumpswap"
