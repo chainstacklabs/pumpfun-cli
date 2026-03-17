@@ -5,6 +5,7 @@ from pathlib import Path
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
+from pumpfun_cli.core.validate import validate_buy_amount, validate_sell_amount
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
     derive_associated_bonding_curve,
@@ -68,6 +69,10 @@ async def buy_token(
 ) -> dict:
     keypair = decrypt_keypair(Path(keystore_path), password)
     mint = parse_pubkey(mint_str, "mint address")
+    # Validate buy amount is positive
+    amount_error = validate_buy_amount(sol_amount)
+    if amount_error:
+        return amount_error
     if mint is None:
         return invalid_pubkey_error(mint_str, "mint address")
     client = RpcClient(rpc_url)
