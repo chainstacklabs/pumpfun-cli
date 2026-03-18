@@ -9,7 +9,9 @@ build/
 .surfpool/
 .coverage
 docs/*
+idl/
 .claude/skills/evals/
 .claude/skills/review-pr/
+.claude/worktrees/
 
 *.local.*

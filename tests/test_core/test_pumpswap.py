@@ -628,6 +628,133 @@ async def test_buy_pumpswap_dry_run_insufficient_sol_includes_warning(tmp_keysto
     client.send_tx.assert_not_called()
 
 
+# --- TransactionFailedError / slippage tests ---
+
+
+@pytest.mark.asyncio
+async def test_buy_pumpswap_slippage_error(tmp_keystore):
+    """PumpSwap slippage error code 6040 returns slippage error."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    pool_data = build_pool_data()
+
+    with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
+        client = AsyncMock()
+        MockClient.return_value = client
+        client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
+            _mock_token_program_resp(),
+            _mock_global_config_resp(),
+            _mock_vol_accumulator_resp(),
+        ]
+        client.get_token_account_balance.side_effect = [1_000_000_000, 30_000_000_000]
+        client.get_balance.return_value = 10_000_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6040))))"
+        )
+        client.close = AsyncMock()
+
+        result = await buy_pumpswap(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.01,
+        )
+
+    assert result["error"] == "slippage"
+    assert result["error_code"] == 6040
+
+
+@pytest.mark.asyncio
+async def test_sell_pumpswap_slippage_error(tmp_keystore):
+    """PumpSwap slippage error code 6004 returns slippage error."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    pool_data = build_pool_data()
+
+    with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
+        client = AsyncMock()
+        MockClient.return_value = client
+        client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
+            _mock_token_program_resp(),
+            _mock_global_config_resp(),
+        ]
+        client.get_token_account_balance.side_effect = [1_000_000, 1_000_000_000, 30_000_000_000]
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6004))))"
+        )
+        client.close = AsyncMock()
+
+        result = await sell_pumpswap(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "all",
+        )
+
+    assert result["error"] == "slippage"
+    assert result["error_code"] == 6004
+
+
+@pytest.mark.asyncio
+async def test_buy_pumpswap_non_slippage_tx_error(tmp_keystore):
+    """Non-slippage error code returns tx_error."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    pool_data = build_pool_data()
+
+    with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
+        client = AsyncMock()
+        MockClient.return_value = client
+        client.get_account_info.side_effect = [
+            _mock_pool_resp(pool_data),
+            _mock_token_program_resp(),
+            _mock_global_config_resp(),
+            _mock_vol_accumulator_resp(),
+        ]
+        client.get_token_account_balance.side_effect = [1_000_000_000, 30_000_000_000]
+        client.get_balance.return_value = 10_000_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(9999))))"
+        )
+        client.close = AsyncMock()
+
+        result = await buy_pumpswap(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.01,
+        )
+
+    assert result["error"] == "tx_error"
+    assert result["error_code"] == 9999
+
+
+@pytest.mark.asyncio
+async def test_buy_pumpswap_pool_not_found_still_works(tmp_keystore):
+    """Pool-not-found RuntimeError still returns pumpswap_error (regression)."""
+    with patch("pumpfun_cli.core.pumpswap.RpcClient") as MockClient:
+        client = AsyncMock()
+        MockClient.return_value = client
+        client.get_account_info.return_value = _mock_pool_not_found()
+        client.close = AsyncMock()
+
+        result = await buy_pumpswap(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.01,
+        )
+
+    assert result["error"] == "pumpswap_error"
+    assert "No PumpSwap pool" in result["message"]
+
+
 @pytest.mark.asyncio
 async def test_buy_pumpswap_without_confirm(tmp_keystore):
     """Buy without confirm=True — result should NOT contain 'confirmed' key."""
