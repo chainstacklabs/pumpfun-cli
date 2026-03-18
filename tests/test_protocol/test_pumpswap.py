@@ -118,3 +118,36 @@ def test_amm_user_volume_differs_from_pump():
     amm = derive_amm_user_volume_accumulator(_USER)
     pump = find_user_volume_accumulator(_USER)
     assert amm != pump
+
+
+# --- Pool PDA derivation tests ---
+
+
+def test_derive_amm_pool_deterministic():
+    """derive_amm_pool returns the same address for the same mint."""
+    from pumpfun_cli.protocol.address import derive_amm_pool
+
+    a = derive_amm_pool(_MINT)
+    b = derive_amm_pool(_MINT)
+    assert a == b
+
+
+def test_derive_amm_pool_matches_migrate_derivation():
+    """derive_amm_pool produces the same PDA as build_migrate_instruction's inline derivation."""
+    from pumpfun_cli.protocol.address import derive_amm_pool, derive_pool_authority
+    from pumpfun_cli.protocol.contracts import PUMP_AMM_PROGRAM, WSOL_MINT
+
+    pool_authority = derive_pool_authority(_MINT)
+    expected, _ = Pubkey.find_program_address(
+        [b"pool", bytes([0, 0]), bytes(pool_authority), bytes(_MINT), bytes(WSOL_MINT)],
+        PUMP_AMM_PROGRAM,
+    )
+    assert derive_amm_pool(_MINT) == expected
+
+
+def test_derive_amm_pool_differs_per_mint():
+    """Different mints produce different pool addresses."""
+    from pumpfun_cli.protocol.address import derive_amm_pool
+
+    other_mint = Pubkey.from_string("So11111111111111111111111111111111111111112")
+    assert derive_amm_pool(_MINT) != derive_amm_pool(other_mint)

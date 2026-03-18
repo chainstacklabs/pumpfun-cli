@@ -21,23 +21,6 @@ from pumpfun_cli.core.trade import (
     sell_token,
 )
 
-
-@pytest.fixture
-def mock_keypair():
-    from solders.keypair import Keypair
-
-    return Keypair()
-
-
-@pytest.fixture
-def tmp_keystore(tmp_path, mock_keypair):
-    from pumpfun_cli.crypto import encrypt_keypair
-
-    keyfile = tmp_path / "wallet.enc"
-    encrypt_keypair(mock_keypair, "testpass", keyfile)
-    return str(keyfile)
-
-
 # --- invalid mint tests ---
 
 
