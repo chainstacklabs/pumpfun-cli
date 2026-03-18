@@ -18,9 +18,17 @@ def _config_callback(ctx: typer.Context):
         raise SystemExit(0)
 
 
+KNOWN_KEYS = {"rpc", "keyfile", "priority_fee", "compute_units"}
+
+
 @app.command("set")
 def config_set(ctx: typer.Context, key: str, value: str):
     """Set a config value."""
+    if key not in KNOWN_KEYS:
+        error(
+            f"Unknown config key: {key}",
+            hint=f"Valid keys: {', '.join(sorted(KNOWN_KEYS))}",
+        )
     save_config_value(key, value)
     json_mode = ctx.obj.json_mode if ctx.obj else False
     if not render({"key": key, "value": value, "status": "saved"}, json_mode):

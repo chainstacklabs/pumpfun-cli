@@ -80,3 +80,12 @@ def test_config_get_json_trailing(tmp_path, monkeypatch):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data == {"key": "rpc", "value": "https://example.com"}
+
+
+def test_config_set_unknown_key(tmp_path, monkeypatch):
+    """config set rejects unknown config keys."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["config", "set", "rpcc", "https://example.com"])
+    assert result.exit_code != 0
+    assert "unknown config key" in result.output.lower()
+    assert "valid keys" in result.output.lower()
