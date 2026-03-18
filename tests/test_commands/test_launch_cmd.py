@@ -8,7 +8,7 @@ from pumpfun_cli.cli import app
 runner = CliRunner()
 
 
-@pytest.mark.parametrize("name,ticker,desc,expected_error", [
+@pytest.mark.parametrize(("name", "ticker", "desc", "expected_error"), [
     ("", "TST", "test", "token name cannot be empty."),
     ("   ", "TST", "test", "token name cannot be empty."),
     ("MyToken", "", "test", "token ticker cannot be empty."),
