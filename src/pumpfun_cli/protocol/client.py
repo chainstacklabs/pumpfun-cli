@@ -12,6 +12,29 @@ from solders.transaction import VersionedTransaction
 
 DEFAULT_RPC_TIMEOUT = 30.0
 
+_ERR_PATTERN = r"InstructionError\(\((\d+),.*InstructionErrorCustom\((\d+)\)"
+
+
+class TransactionFailedError(RuntimeError):
+    """Raised when a confirmed transaction fails on-chain."""
+
+    error_code: int | None
+    instruction_index: int | None
+    raw_error: str
+
+    def __init__(self, err_obj: object) -> None:
+        import re
+
+        self.raw_error = str(err_obj)
+        match = re.search(_ERR_PATTERN, self.raw_error)
+        if match:
+            self.instruction_index = int(match.group(1))
+            self.error_code = int(match.group(2))
+        else:
+            self.instruction_index = None
+            self.error_code = None
+        super().__init__(self.raw_error)
+
 
 class RpcClient:
     """Simplified Solana RPC client — no background tasks, no lifecycle."""
@@ -104,9 +127,7 @@ class RpcClient:
                 resp.value, max_supported_transaction_version=0
             )
             if tx_resp.value and tx_resp.value.transaction.meta.err:
-                raise RuntimeError(
-                    f"Transaction confirmed but failed: {tx_resp.value.transaction.meta.err}"
-                )
+                raise TransactionFailedError(tx_resp.value.transaction.meta.err)
         return str(resp.value)
 
     async def get_transaction(self, signature_str: str) -> dict | None:

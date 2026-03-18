@@ -10,10 +10,11 @@ from pumpfun_cli.protocol.address import (
     derive_associated_bonding_curve,
     derive_bonding_curve,
 )
-from pumpfun_cli.protocol.client import RpcClient
+from pumpfun_cli.protocol.client import RpcClient, TransactionFailedError
 from pumpfun_cli.protocol.contracts import (
     ATA_RENT_LAMPORTS,
     LAMPORTS_PER_SOL,
+    PUMP_SLIPPAGE_ERROR_CODES,
     SOL_RENT_EXEMPT_MIN,
     TOKEN_DECIMALS,
 )
@@ -52,6 +53,21 @@ def _estimate_buy_required_lamports(
     """Estimate total lamports required for a buy transaction."""
     fee_lamports = priority_fee * compute_units // 1_000_000
     return sol_lamports + fee_lamports + ATA_RENT_LAMPORTS + SOL_RENT_EXEMPT_MIN
+
+
+def _handle_tx_error(exc: TransactionFailedError, slippage_codes: set[int]) -> dict:
+    """Convert a TransactionFailedError into a structured error dict."""
+    if exc.error_code in slippage_codes:
+        return {
+            "error": "slippage",
+            "message": "Transaction failed: slippage tolerance exceeded.",
+            "error_code": exc.error_code,
+        }
+    return {
+        "error": "tx_error",
+        "message": f"Transaction failed on-chain: {exc.raw_error}",
+        "error_code": exc.error_code,
+    }
 
 
 async def buy_token(
@@ -153,13 +169,16 @@ async def buy_token(
             token_program=token_program,
         )
 
-        sig = await client.send_tx(
-            ixs,
-            [keypair],
-            confirm=confirm,
-            priority_fee=priority_fee if priority_fee is not None else 200_000,
-            compute_units=compute_units if compute_units is not None else 100_000,
-        )
+        try:
+            sig = await client.send_tx(
+                ixs,
+                [keypair],
+                confirm=confirm,
+                priority_fee=priority_fee if priority_fee is not None else 200_000,
+                compute_units=compute_units if compute_units is not None else 100_000,
+            )
+        except TransactionFailedError as exc:
+            return _handle_tx_error(exc, PUMP_SLIPPAGE_ERROR_CODES)
         result = {
             "action": "buy",
             "mint": mint_str,
@@ -274,13 +293,16 @@ async def sell_token(
             token_program=token_program,
         )
 
-        sig = await client.send_tx(
-            ixs,
-            [keypair],
-            confirm=confirm,
-            priority_fee=priority_fee if priority_fee is not None else 200_000,
-            compute_units=compute_units if compute_units is not None else 100_000,
-        )
+        try:
+            sig = await client.send_tx(
+                ixs,
+                [keypair],
+                confirm=confirm,
+                priority_fee=priority_fee if priority_fee is not None else 200_000,
+                compute_units=compute_units if compute_units is not None else 100_000,
+            )
+        except TransactionFailedError as exc:
+            return _handle_tx_error(exc, PUMP_SLIPPAGE_ERROR_CODES)
         result = {
             "action": "sell",
             "mint": mint_str,

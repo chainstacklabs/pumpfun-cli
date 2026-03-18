@@ -615,6 +615,95 @@ def test_sell_slippage_100(tmp_path, monkeypatch):
     assert "Slippage must be between" not in result.output
 
 
+# --- slippage / tx_error exit code tests ---
+
+
+def test_buy_slippage_error_exit_code_3(tmp_path, monkeypatch):
+    """Core returning slippage error results in exit code 3."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy:
+        mock_buy.return_value = {
+            "error": "slippage",
+            "message": "Transaction failed: slippage tolerance exceeded.",
+            "error_code": 6002,
+        }
+
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "buy", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 3
+    assert "slippage" in result.output.lower()
+
+
+def test_sell_slippage_error_exit_code_3(tmp_path, monkeypatch):
+    """Core returning slippage error on sell results in exit code 3."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell:
+        mock_sell.return_value = {
+            "error": "slippage",
+            "message": "Transaction failed: slippage tolerance exceeded.",
+            "error_code": 6003,
+        }
+
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "sell", _FAKE_MINT, "all"],
+        )
+
+    assert result.exit_code == 3
+    assert "slippage" in result.output.lower()
+
+
+def test_buy_tx_error_exit_code_1(tmp_path, monkeypatch):
+    """Core returning tx_error results in exit code 1."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+    with patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy:
+        mock_buy.return_value = {
+            "error": "tx_error",
+            "message": "Transaction failed on-chain: error 6020",
+            "error_code": 6020,
+        }
+
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "buy", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 1
+
+
 def test_buy_json_output_has_expected_keys(tmp_path, monkeypatch):
     """Verify JSON buy output has all expected keys."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
