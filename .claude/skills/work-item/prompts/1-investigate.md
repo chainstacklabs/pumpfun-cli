@@ -38,7 +38,7 @@ Investigate the current codebase and CLI behavior to understand the gap this wor
    - **Unit** (always): mocked tests in `tests/test_core/`, `tests/test_commands/`, `tests/test_protocol/`
    - **Surfpool** (if touches RPC/transaction logic): integration tests in `tests/test_surfpool/`
    - **Mainnet** (rare — only if surfpool cannot cover it): e2e via `./scripts/mainnet-test.sh`
-7. **Check for combinable items.** Read `docs/work-items.md` and check if any other undone item shares >50% of the same code path. If so, recommend combining.
+7. **Check for combinable items.** Check `docs/backlog.md` (if it exists) or ask the user if any other planned item shares >50% of the same code path. If so, recommend combining.
 
 ## Output Format
 
