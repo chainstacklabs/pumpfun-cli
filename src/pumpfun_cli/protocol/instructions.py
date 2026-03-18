@@ -323,7 +323,7 @@ def build_create_instructions(
         AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
         # Mayhem accounts are always required by create_v2 per IDL,
         # regardless of is_mayhem_mode flag value.
-        AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=False),
         AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
         AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
         AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),

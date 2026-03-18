@@ -24,208 +24,58 @@ _UPLOAD_PATCH = patch(
     return_value=FAKE_URI,
 )
 
-
-# ── mayhem=False, cashback=False (default) ──────────────────────────────
+_LAUNCH_MATRIX = [
+    pytest.param(False, False, None, id="default"),
+    pytest.param(False, True, None, id="cashback"),
+    pytest.param(True, False, None, id="mayhem"),
+    pytest.param(True, True, None, id="mayhem+cashback"),
+    pytest.param(False, False, 0.001, id="default+buy"),
+    pytest.param(False, True, 0.001, id="cashback+buy"),
+    pytest.param(True, False, 0.001, id="mayhem+buy"),
+    pytest.param(True, True, 0.001, id="mayhem+cashback+buy"),
+]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("is_mayhem,is_cashback,initial_buy_sol", _LAUNCH_MATRIX)
 @_UPLOAD_PATCH
-async def test_launch_default(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
+async def test_launch(
+    _mock_upload,
+    surfpool_rpc,
+    funded_keypair,
+    test_keystore,
+    test_password,
+    is_mayhem,
+    is_cashback,
+    initial_buy_sol,
 ):
-    """Launch with defaults: no mayhem, no cashback."""
+    """Launch token with given mayhem/cashback/buy combination."""
+    kwargs = {}
+    if is_mayhem:
+        kwargs["is_mayhem"] = True
+    if is_cashback:
+        kwargs["is_cashback"] = True
+    if initial_buy_sol is not None:
+        kwargs["initial_buy_sol"] = initial_buy_sol
+
     result = await launch_token(
         rpc_url=surfpool_rpc,
         keystore_path=str(test_keystore),
         password=test_password,
-        name="Default",
-        ticker="DFLT",
-        description="default launch",
+        name="Test",
+        ticker="TST",
+        description="parametrized launch",
+        **kwargs,
     )
 
     assert "error" not in result, f"Launch failed: {result}"
     assert result["action"] == "launch"
-    assert result["is_cashback"] is False
+    assert result["is_cashback"] is is_cashback
     assert result["signature"]
+
+    if initial_buy_sol is not None:
+        assert result["initial_buy_sol"] == initial_buy_sol
 
     info = await get_token_info(surfpool_rpc, result["mint"])
     assert "error" not in info, f"Token not found: {info}"
     assert info["graduated"] is False
-
-
-# ── mayhem=False, cashback=True ─────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_cashback(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch with cashback enabled, no mayhem."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="Cashback",
-        ticker="CSHB",
-        description="cashback launch",
-        is_cashback=True,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["is_cashback"] is True
-    assert result["signature"]
-
-    info = await get_token_info(surfpool_rpc, result["mint"])
-    assert "error" not in info, f"Token not found: {info}"
-    assert info["graduated"] is False
-
-
-# ── mayhem=True, cashback=False ─────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_mayhem(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch with mayhem enabled, no cashback."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="Mayhem",
-        ticker="MYHM",
-        description="mayhem launch",
-        is_mayhem=True,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["is_cashback"] is False
-    assert result["signature"]
-
-    info = await get_token_info(surfpool_rpc, result["mint"])
-    assert "error" not in info, f"Token not found: {info}"
-    assert info["graduated"] is False
-
-
-# ── mayhem=True, cashback=True ──────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_mayhem_cashback(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch with both mayhem and cashback enabled."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="MayhemCB",
-        ticker="MHCB",
-        description="mayhem + cashback launch",
-        is_mayhem=True,
-        is_cashback=True,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["is_cashback"] is True
-    assert result["signature"]
-
-    info = await get_token_info(surfpool_rpc, result["mint"])
-    assert "error" not in info, f"Token not found: {info}"
-    assert info["graduated"] is False
-
-
-# ── with initial buy ────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_default_with_buy(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch with initial buy, no mayhem, no cashback."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="DefBuy",
-        ticker="DBUY",
-        description="default + buy",
-        initial_buy_sol=0.001,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["initial_buy_sol"] == 0.001
-    assert result["signature"]
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_cashback_with_buy(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch cashback token with initial buy."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="CashBuy",
-        ticker="CBUY",
-        description="cashback + buy",
-        is_cashback=True,
-        initial_buy_sol=0.001,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["is_cashback"] is True
-    assert result["initial_buy_sol"] == 0.001
-    assert result["signature"]
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_mayhem_with_buy(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch mayhem token with initial buy."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="MyhBuy",
-        ticker="MBUY",
-        description="mayhem + buy",
-        is_mayhem=True,
-        initial_buy_sol=0.001,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["initial_buy_sol"] == 0.001
-    assert result["signature"]
-
-
-@pytest.mark.asyncio
-@_UPLOAD_PATCH
-async def test_launch_mayhem_cashback_with_buy(
-    _mock_upload, surfpool_rpc, funded_keypair, test_keystore, test_password
-):
-    """Launch mayhem + cashback token with initial buy."""
-    result = await launch_token(
-        rpc_url=surfpool_rpc,
-        keystore_path=str(test_keystore),
-        password=test_password,
-        name="MhCbBuy",
-        ticker="MCBB",
-        description="mayhem + cashback + buy",
-        is_mayhem=True,
-        is_cashback=True,
-        initial_buy_sol=0.001,
-    )
-
-    assert "error" not in result, f"Launch failed: {result}"
-    assert result["is_cashback"] is True
-    assert result["initial_buy_sol"] == 0.001
-    assert result["signature"]
