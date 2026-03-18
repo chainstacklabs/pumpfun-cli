@@ -286,6 +286,7 @@ def build_create_instructions(
     symbol: str,
     uri: str,
     is_mayhem: bool = False,
+    is_cashback: bool = False,
     token_program: Pubkey = TOKEN_2022_PROGRAM,
 ) -> list[Instruction]:
     """Build create_v2 token instruction for pump.fun (Token2022).
@@ -307,6 +308,9 @@ def build_create_instructions(
     assoc_bc = derive_associated_bonding_curve(mint, bonding_curve, token_program)
     mint_auth = _derive_mint_authority()
 
+    mayhem_state = derive_mayhem_state(mint)
+    mayhem_token_vault = derive_mayhem_token_vault(mint)
+
     create_accounts = [
         AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
         AccountMeta(pubkey=mint_auth, is_signer=False, is_writable=False),
@@ -317,20 +321,14 @@ def build_create_instructions(
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+        # Mayhem accounts are always required by create_v2 per IDL,
+        # regardless of is_mayhem_mode flag value.
+        AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=mayhem_token_vault, is_signer=False, is_writable=True),
     ]
-
-    if is_mayhem:
-        mayhem_state = derive_mayhem_state(mint)
-        mayhem_token_vault = derive_mayhem_token_vault(mint)
-        create_accounts.extend(
-            [
-                AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=mayhem_token_vault, is_signer=False, is_writable=True),
-            ]
-        )
 
     create_accounts.extend(
         [
@@ -348,6 +346,7 @@ def build_create_instructions(
         + _encode_borsh_string(uri)
         + bytes(user)  # creator arg
         + struct.pack("<?", is_mayhem)  # is_mayhem_mode: bool
+        + struct.pack("<?", is_cashback)  # is_cashback_enabled: OptionBool
     )
 
     create_ix = Instruction(

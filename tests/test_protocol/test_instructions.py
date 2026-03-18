@@ -81,3 +81,71 @@ def test_buy_exact_sol_in_discriminator():
     )
     buy_ix = ixs[-1]
     assert buy_ix.data[:8] == BUY_EXACT_SOL_IN_DISCRIMINATOR
+
+
+def test_create_instructions_cashback_false():
+    """create_v2 with is_cashback=False encodes OptionBool as 0x00."""
+    from pumpfun_cli.protocol.instructions import build_create_instructions
+
+    idl = IDLParser(str(IDL_PATH))
+    ixs = build_create_instructions(
+        idl=idl,
+        mint=_MINT,
+        user=_USER,
+        name="Test",
+        symbol="TST",
+        uri="https://example.com",
+        is_mayhem=False,
+        is_cashback=False,
+    )
+    assert len(ixs) == 1
+    create_ix = ixs[0]
+    # Last byte should be 0x00 (is_cashback_enabled = false)
+    assert create_ix.data[-1:] == b"\x00"
+    # Second-to-last byte is is_mayhem_mode = false
+    assert create_ix.data[-2:-1] == b"\x00"
+
+
+def test_create_instructions_cashback_true():
+    """create_v2 with is_cashback=True encodes OptionBool as 0x01."""
+    from pumpfun_cli.protocol.instructions import build_create_instructions
+
+    idl = IDLParser(str(IDL_PATH))
+    ixs = build_create_instructions(
+        idl=idl,
+        mint=_MINT,
+        user=_USER,
+        name="Test",
+        symbol="TST",
+        uri="https://example.com",
+        is_mayhem=False,
+        is_cashback=True,
+    )
+    assert len(ixs) == 1
+    create_ix = ixs[0]
+    # Last byte should be 0x01 (is_cashback_enabled = true)
+    assert create_ix.data[-1:] == b"\x01"
+    # Second-to-last byte is is_mayhem_mode = false
+    assert create_ix.data[-2:-1] == b"\x00"
+
+
+def test_create_instructions_mayhem_and_cashback():
+    """create_v2 with both is_mayhem=True and is_cashback=True."""
+    from pumpfun_cli.protocol.instructions import build_create_instructions
+
+    idl = IDLParser(str(IDL_PATH))
+    ixs = build_create_instructions(
+        idl=idl,
+        mint=_MINT,
+        user=_USER,
+        name="Test",
+        symbol="TST",
+        uri="https://example.com",
+        is_mayhem=True,
+        is_cashback=True,
+    )
+    assert len(ixs) == 1
+    create_ix = ixs[0]
+    # Last byte = cashback true, second-to-last = mayhem true
+    assert create_ix.data[-1:] == b"\x01"
+    assert create_ix.data[-2:-1] == b"\x01"

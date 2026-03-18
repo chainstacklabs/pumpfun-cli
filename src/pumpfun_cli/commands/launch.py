@@ -16,6 +16,7 @@ def launch(
     image: str | None = typer.Option(None, "--image", help="Path to token image"),
     buy: float | None = typer.Option(None, "--buy", help="Initial buy amount in SOL"),
     mayhem: bool = typer.Option(False, "--mayhem", help="Enable mayhem mode"),
+    cashback: bool = typer.Option(False, "--cashback", help="Enable cashback for the token"),
 ):
     """Launch a new token on pump.fun (create_v2 + extend_account)."""
     state = ctx.obj
@@ -49,6 +50,7 @@ def launch(
                 image,
                 buy,
                 mayhem,
+                cashback,
                 **overrides,
             )
         )
@@ -63,5 +65,7 @@ def launch(
         typer.echo(f"  Mint:     {result['mint']}")
         typer.echo(f"  TX:       {result['explorer']}")
         typer.echo(f"  Pump.fun: {result['pump_url']}")
+        if result.get("is_cashback"):
+            typer.echo("  Cashback: enabled")
         if result.get("initial_buy_sol"):
             typer.echo(f"  Buy:      {result['initial_buy_sol']} SOL")
