@@ -58,6 +58,7 @@ async def launch_token(
     image_path: str | None = None,
     initial_buy_sol: float | None = None,
     is_mayhem: bool = False,
+    is_cashback: bool = False,
     priority_fee: int | None = None,
     compute_units: int | None = None,
 ) -> dict:
@@ -84,6 +85,7 @@ async def launch_token(
             symbol=ticker,
             uri=uri,
             is_mayhem=is_mayhem,
+            is_cashback=is_cashback,
         )
 
         # 4. Add extend_account instruction (required for frontend visibility)
@@ -121,6 +123,7 @@ async def launch_token(
             "ticker": ticker,
             "mint": str(mint),
             "metadata_uri": uri,
+            "is_cashback": is_cashback,
             "initial_buy_sol": initial_buy_sol,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
