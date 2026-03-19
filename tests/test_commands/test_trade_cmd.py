@@ -756,3 +756,313 @@ def test_buy_json_output_has_expected_keys(tmp_path, monkeypatch):
         "explorer",
     }
     assert expected_keys.issubset(data.keys())
+
+
+# --- auto-routing command-layer tests ---
+
+
+def _setup_wallet(tmp_path, monkeypatch):
+    """Create a wallet and set env vars for command-layer tests."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PUMPFUN_PASSWORD", "testpass")
+
+    from solders.keypair import Keypair
+
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    encrypt_keypair(Keypair(), "testpass", config_dir / "wallet.enc")
+
+
+def test_buy_graduated_fallback_forwards_slippage(tmp_path, monkeypatch):
+    """--slippage 5 forwarded to buy_pumpswap on graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy,
+        patch("pumpfun_cli.commands.trade.buy_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_buy.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "action": "buy",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "sol_spent": 0.01,
+            "tokens_received": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "buy", "--slippage", "5", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 0
+    call_args = mock_pumpswap.call_args
+    assert call_args[0][5] == 5 or call_args.kwargs.get("slippage") == 5
+
+
+def test_sell_graduated_fallback_forwards_slippage(tmp_path, monkeypatch):
+    """--slippage 5 forwarded to sell_pumpswap on graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell,
+        patch("pumpfun_cli.commands.trade.sell_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_sell.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "action": "sell",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "sol_received": 0.01,
+            "tokens_sold": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "sell", "--slippage", "5", _FAKE_MINT, "all"],
+        )
+
+    assert result.exit_code == 0
+    call_args = mock_pumpswap.call_args
+    assert call_args[0][5] == 5 or call_args.kwargs.get("slippage") == 5
+
+
+def test_buy_graduated_fallback_forwards_priority_fee(tmp_path, monkeypatch):
+    """--priority-fee + --compute-units forwarded to buy_pumpswap on graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy,
+        patch("pumpfun_cli.commands.trade.buy_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_buy.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "action": "buy",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "sol_spent": 0.01,
+            "tokens_received": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+        }
+
+        result = runner.invoke(
+            app,
+            [
+                "--json",
+                "--rpc",
+                "http://rpc",
+                "--priority-fee",
+                "55000",
+                "--compute-units",
+                "350000",
+                "buy",
+                _FAKE_MINT,
+                "0.01",
+            ],
+        )
+
+    assert result.exit_code == 0
+    call_kwargs = mock_pumpswap.call_args.kwargs
+    assert call_kwargs.get("priority_fee") == 55000
+    assert call_kwargs.get("compute_units") == 350000
+
+
+def test_buy_graduated_fallback_forwards_dry_run(tmp_path, monkeypatch):
+    """--dry-run forwarded to buy_pumpswap on graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy,
+        patch("pumpfun_cli.commands.trade.buy_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_buy.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "dry_run": True,
+            "action": "buy",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "sol_in": 0.01,
+            "expected_tokens": 100.0,
+            "effective_price_sol": 0.0001,
+            "spot_price_sol": 0.00009,
+            "price_impact_pct": 1.0,
+            "min_tokens_out": 95.0,
+            "slippage_pct": 15,
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "buy", "--dry-run", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["dry_run"] is True
+    assert data["venue"] == "pumpswap"
+    call_kwargs = mock_pumpswap.call_args
+    assert call_kwargs.kwargs.get("dry_run") is True or call_kwargs[1].get("dry_run") is True
+
+
+def test_sell_graduated_fallback_forwards_dry_run(tmp_path, monkeypatch):
+    """--dry-run forwarded to sell_pumpswap on graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell,
+        patch("pumpfun_cli.commands.trade.sell_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_sell.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "dry_run": True,
+            "action": "sell",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "tokens_in": 100.0,
+            "expected_sol": 0.01,
+            "effective_price_sol": 0.0001,
+            "spot_price_sol": 0.00009,
+            "price_impact_pct": -1.0,
+            "min_sol_out": 0.0085,
+            "slippage_pct": 15,
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "sell", "--dry-run", _FAKE_MINT, "100"],
+        )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["dry_run"] is True
+    assert data["venue"] == "pumpswap"
+
+
+def test_buy_graduated_fallback_forwards_confirm(tmp_path, monkeypatch):
+    """--confirm forwarded to buy_pumpswap on graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy,
+        patch("pumpfun_cli.commands.trade.buy_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_buy.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "action": "buy",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "sol_spent": 0.01,
+            "tokens_received": 100.0,
+            "signature": "sig",
+            "explorer": "https://solscan.io/tx/sig",
+            "confirmed": True,
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "buy", "--confirm", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code == 0
+    call_kwargs = mock_pumpswap.call_args
+    assert call_kwargs.kwargs.get("confirm") is True or call_kwargs[1].get("confirm") is True
+
+
+def test_buy_not_found_no_pumpswap_fallback(tmp_path, monkeypatch):
+    """not_found does NOT trigger pumpswap fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy,
+        patch("pumpfun_cli.commands.trade.buy_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_buy.return_value = {"error": "not_found", "message": "No bonding curve found."}
+
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "buy", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code != 0
+    mock_pumpswap.assert_not_called()
+
+
+def test_sell_not_found_no_pumpswap_fallback(tmp_path, monkeypatch):
+    """not_found does NOT trigger pumpswap fallback for sell."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell,
+        patch("pumpfun_cli.commands.trade.sell_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_sell.return_value = {"error": "not_found", "message": "No bonding curve found."}
+
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "sell", _FAKE_MINT, "all"],
+        )
+
+    assert result.exit_code != 0
+    mock_pumpswap.assert_not_called()
+
+
+def test_buy_graduated_fallback_pumpswap_error(tmp_path, monkeypatch):
+    """pumpswap error surfaces correctly after graduated fallback."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_buy,
+        patch("pumpfun_cli.commands.trade.buy_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_buy.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "error": "pumpswap_error",
+            "message": "No PumpSwap pool found for this token.",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "buy", _FAKE_MINT, "0.01"],
+        )
+
+    assert result.exit_code != 0
+    assert "PumpSwap" in result.output or "pumpswap" in result.output.lower()
+
+
+def test_sell_graduated_fallback_sell_all(tmp_path, monkeypatch):
+    """sell 'all' through graduated fallback works."""
+    _setup_wallet(tmp_path, monkeypatch)
+
+    with (
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as mock_sell,
+        patch("pumpfun_cli.commands.trade.sell_pumpswap", new_callable=AsyncMock) as mock_pumpswap,
+    ):
+        mock_sell.return_value = {"error": "graduated", "message": "Token has graduated."}
+        mock_pumpswap.return_value = {
+            "action": "sell",
+            "venue": "pumpswap",
+            "mint": _FAKE_MINT,
+            "sol_received": 0.05,
+            "tokens_sold": 500.0,
+            "signature": "sellall_sig",
+            "explorer": "https://solscan.io/tx/sellall_sig",
+        }
+
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", "sell", _FAKE_MINT, "all"],
+        )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["venue"] == "pumpswap"
+    assert data["tokens_sold"] == 500.0
+    # Verify "all" was passed through
+    call_args = mock_pumpswap.call_args
+    assert call_args[0][4] == "all"
