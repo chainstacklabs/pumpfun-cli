@@ -173,6 +173,14 @@ def test_tokens_no_subcommand_shows_help():
     assert result.exit_code == 0
 
 
+def test_launch_help_shows_cashback():
+    """Launch --help includes --cashback flag."""
+    result = runner.invoke(app, ["launch", "--help"])
+    assert result.exit_code == 0
+    out = _strip_ansi(result.output)
+    assert "--cashback" in out
+
+
 @pytest.mark.parametrize("limit", ["0", "-1"])
 @pytest.mark.parametrize(
     ("subcommand", "extra_args"),

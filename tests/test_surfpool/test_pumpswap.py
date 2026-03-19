@@ -1,14 +1,15 @@
 """Surfpool integration: PumpSwap AMM buy/sell against forked mainnet state.
 
-NOTE: PumpSwap tests use getProgramAccounts which is slow through surfpool
-(lazy-loading from mainnet). We use a 120s RPC timeout to accommodate this.
+Pool lookup now uses PDA derivation + getAccountInfo (not getProgramAccounts),
+so there is no heavy account scan. The timeout is kept at 120s for general
+surfpool lazy-loading of pool token accounts from mainnet.
 """
 
 import pytest
 
 from pumpfun_cli.core.pumpswap import buy_pumpswap, get_pumpswap_info, sell_pumpswap
 
-# Surfpool needs time to lazy-fetch PumpSwap program accounts from mainnet.
+# Surfpool needs time to lazy-fetch pool token accounts from mainnet.
 SURFPOOL_TIMEOUT = 120.0
 
 

@@ -184,3 +184,25 @@ def derive_amm_pool_v2(base_mint: Pubkey) -> Pubkey:
     """Derive the PumpSwap pool-v2 PDA for a base mint."""
     addr, _ = Pubkey.find_program_address([b"pool-v2", bytes(base_mint)], PUMP_AMM_PROGRAM)
     return addr
+
+
+def derive_pool_authority(mint: Pubkey) -> Pubkey:
+    """Derive the pool authority PDA used during migration."""
+    addr, _ = Pubkey.find_program_address([b"pool-authority", bytes(mint)], PUMP_PROGRAM)
+    return addr
+
+
+def derive_amm_pool(mint: Pubkey) -> Pubkey:
+    """Derive the PumpSwap AMM pool PDA for a token mint.
+
+    Uses the same seed layout as the migrate instruction:
+    seeds = ["pool", index_bytes, pool_authority, base_mint, quote_mint]
+    """
+    from pumpfun_cli.protocol.contracts import WSOL_MINT
+
+    pool_authority = derive_pool_authority(mint)
+    addr, _ = Pubkey.find_program_address(
+        [b"pool", bytes([0, 0]), bytes(pool_authority), bytes(mint), bytes(WSOL_MINT)],
+        PUMP_AMM_PROGRAM,
+    )
+    return addr

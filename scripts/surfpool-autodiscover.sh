@@ -57,6 +57,25 @@ else:
 }
 echo "  Active mint: $ACTIVE_MINT"
 
+echo "Discovering cashback-enabled bonding-curve token..."
+CASHBACK_MINT=$(uv run pumpfun tokens new --limit 20 2>/dev/null | uv run python3 -c "
+import json, sys
+tokens = json.load(sys.stdin)
+for t in tokens:
+    if (not t.get('complete', True)
+        and t.get('is_cashback_enabled', False)
+        and t.get('real_token_reserves', 0) > 0
+        and t.get('real_sol_reserves', 0) > 1_000_000_000):
+        print(t['mint'])
+        break
+else:
+    sys.exit(1)
+" 2>/dev/null) || {
+    echo "Warning: Could not find a cashback token. Cashback-specific tests will be skipped."
+    CASHBACK_MINT=""
+}
+[[ -n "$CASHBACK_MINT" ]] && echo "  Cashback mint: $CASHBACK_MINT"
+
 echo "Discovering graduated PumpSwap token..."
 GRADUATED_MINT=$(uv run pumpfun tokens trending --limit 10 2>/dev/null | uv run python3 -c "
 import json, sys
@@ -77,4 +96,6 @@ echo "  Graduated mint: $GRADUATED_MINT"
 
 echo ""
 echo "Running surfpool tests with discovered mints..."
-exec "$SCRIPT_DIR/surfpool-test.sh" --mint "$ACTIVE_MINT" --graduated "$GRADUATED_MINT" "$@"
+CASHBACK_ARGS=()
+[[ -n "$CASHBACK_MINT" ]] && CASHBACK_ARGS=(--cashback "$CASHBACK_MINT")
+exec "$SCRIPT_DIR/surfpool-test.sh" --mint "$ACTIVE_MINT" --graduated "$GRADUATED_MINT" "${CASHBACK_ARGS[@]}" "$@"

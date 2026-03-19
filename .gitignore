@@ -11,5 +11,6 @@ build/
 docs/*
 .claude/skills/evals/
 .claude/skills/review-pr/
+.claude/worktrees/
 
 *.local.*

@@ -21,23 +21,6 @@ from pumpfun_cli.core.trade import (
     sell_token,
 )
 
-
-@pytest.fixture
-def mock_keypair():
-    from solders.keypair import Keypair
-
-    return Keypair()
-
-
-@pytest.fixture
-def tmp_keystore(tmp_path, mock_keypair):
-    from pumpfun_cli.crypto import encrypt_keypair
-
-    keyfile = tmp_path / "wallet.enc"
-    encrypt_keypair(mock_keypair, "testpass", keyfile)
-    return str(keyfile)
-
-
 # --- invalid mint tests ---
 
 
@@ -1101,6 +1084,240 @@ async def test_buy_token_sufficient_sol_proceeds(tmp_keystore):
     assert result["action"] == "buy"
     assert result["signature"] == "sufficientsig"
     client.send_tx.assert_called_once()
+
+
+# --- TransactionFailedError / slippage tests ---
+
+
+@pytest.mark.asyncio
+async def test_buy_token_slippage_error_on_confirm(tmp_keystore):
+    """When send_tx raises TransactionFailedError with slippage code, buy returns slippage error."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient") as MockClient,
+        patch("pumpfun_cli.core.trade.IDLParser") as MockIDL,
+        _PATCH_TOKEN_PROG,
+    ):
+        client = AsyncMock()
+        MockClient.return_value = client
+        resp = MagicMock()
+        resp.value = MagicMock()
+        resp.value.data = b"\x00" * 200
+        client.get_account_info.return_value = resp
+        client.get_balance.return_value = 10_000_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6002))))"
+        )
+        client.close = AsyncMock()
+
+        idl = MagicMock()
+        MockIDL.return_value = idl
+        idl.decode_account_data.return_value = {
+            "complete": False,
+            "virtual_token_reserves": 1_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+            "real_sol_reserves": 10_000_000_000,
+            "creator": bytes(Pubkey.from_string("11111111111111111111111111111112")),
+            "is_mayhem_mode": False,
+        }
+        idl.get_instruction_discriminators.return_value = {"buy": b"\x00" * 8}
+
+        result = await buy_token(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.01,
+        )
+
+    assert result["error"] == "slippage"
+    assert result["error_code"] == 6002
+
+
+@pytest.mark.asyncio
+async def test_sell_token_slippage_error_on_confirm(tmp_keystore):
+    """When send_tx raises TransactionFailedError with slippage code 6003, sell returns slippage."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient") as MockClient,
+        patch("pumpfun_cli.core.trade.IDLParser") as MockIDL,
+        _PATCH_TOKEN_PROG,
+    ):
+        client = AsyncMock()
+        MockClient.return_value = client
+        resp = MagicMock()
+        resp.value = MagicMock()
+        resp.value.data = b"\x00" * 200
+        client.get_account_info.return_value = resp
+        client.get_token_account_balance.return_value = 1_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6003))))"
+        )
+        client.close = AsyncMock()
+
+        idl = MagicMock()
+        MockIDL.return_value = idl
+        idl.decode_account_data.return_value = {
+            "complete": False,
+            "virtual_token_reserves": 1_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+            "real_sol_reserves": 10_000_000_000,
+            "creator": bytes(Pubkey.from_string("11111111111111111111111111111112")),
+            "is_mayhem_mode": False,
+            "is_cashback_coin": False,
+        }
+        idl.get_instruction_discriminators.return_value = {"sell": b"\x00" * 8}
+
+        result = await sell_token(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "1.0",
+        )
+
+    assert result["error"] == "slippage"
+    assert result["error_code"] == 6003
+
+
+@pytest.mark.asyncio
+async def test_buy_token_non_slippage_tx_error(tmp_keystore):
+    """Non-slippage error code returns tx_error."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient") as MockClient,
+        patch("pumpfun_cli.core.trade.IDLParser") as MockIDL,
+        _PATCH_TOKEN_PROG,
+    ):
+        client = AsyncMock()
+        MockClient.return_value = client
+        resp = MagicMock()
+        resp.value = MagicMock()
+        resp.value.data = b"\x00" * 200
+        client.get_account_info.return_value = resp
+        client.get_balance.return_value = 10_000_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6020))))"
+        )
+        client.close = AsyncMock()
+
+        idl = MagicMock()
+        MockIDL.return_value = idl
+        idl.decode_account_data.return_value = {
+            "complete": False,
+            "virtual_token_reserves": 1_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+            "real_sol_reserves": 10_000_000_000,
+            "creator": bytes(Pubkey.from_string("11111111111111111111111111111112")),
+            "is_mayhem_mode": False,
+        }
+        idl.get_instruction_discriminators.return_value = {"buy": b"\x00" * 8}
+
+        result = await buy_token(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.01,
+        )
+
+    assert result["error"] == "tx_error"
+    assert result["error_code"] == 6020
+
+
+@pytest.mark.asyncio
+async def test_sell_token_non_slippage_tx_error(tmp_keystore):
+    """Non-slippage error code on sell returns tx_error."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient") as MockClient,
+        patch("pumpfun_cli.core.trade.IDLParser") as MockIDL,
+        _PATCH_TOKEN_PROG,
+    ):
+        client = AsyncMock()
+        MockClient.return_value = client
+        resp = MagicMock()
+        resp.value = MagicMock()
+        resp.value.data = b"\x00" * 200
+        client.get_account_info.return_value = resp
+        client.get_token_account_balance.return_value = 1_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6021))))"
+        )
+        client.close = AsyncMock()
+
+        idl = MagicMock()
+        MockIDL.return_value = idl
+        idl.decode_account_data.return_value = {
+            "complete": False,
+            "virtual_token_reserves": 1_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+            "real_sol_reserves": 10_000_000_000,
+            "creator": bytes(Pubkey.from_string("11111111111111111111111111111112")),
+            "is_mayhem_mode": False,
+            "is_cashback_coin": False,
+        }
+        idl.get_instruction_discriminators.return_value = {"sell": b"\x00" * 8}
+
+        result = await sell_token(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "1.0",
+        )
+
+    assert result["error"] == "tx_error"
+    assert result["error_code"] == 6021
+
+
+@pytest.mark.asyncio
+async def test_buy_token_client_closed_on_tx_error(tmp_keystore):
+    """client.close() is called even when TransactionFailedError is raised."""
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient") as MockClient,
+        patch("pumpfun_cli.core.trade.IDLParser") as MockIDL,
+        _PATCH_TOKEN_PROG,
+    ):
+        client = AsyncMock()
+        MockClient.return_value = client
+        resp = MagicMock()
+        resp.value = MagicMock()
+        resp.value.data = b"\x00" * 200
+        client.get_account_info.return_value = resp
+        client.get_balance.return_value = 10_000_000_000
+        client.send_tx.side_effect = TransactionFailedError(
+            "TransactionErrorInstructionError((0, Tagged(InstructionErrorCustom(6002))))"
+        )
+        client.close = AsyncMock()
+
+        idl = MagicMock()
+        MockIDL.return_value = idl
+        idl.decode_account_data.return_value = {
+            "complete": False,
+            "virtual_token_reserves": 1_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+            "real_sol_reserves": 10_000_000_000,
+            "creator": bytes(Pubkey.from_string("11111111111111111111111111111112")),
+            "is_mayhem_mode": False,
+        }
+        idl.get_instruction_discriminators.return_value = {"buy": b"\x00" * 8}
+
+        await buy_token(
+            "http://rpc",
+            tmp_keystore,
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.01,
+        )
+
+    client.close.assert_called_once()
 
 
 @pytest.mark.asyncio

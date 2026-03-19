@@ -1,11 +1,11 @@
 ---
 name: work-item
-description: Work item pipeline for pumpfun-cli — investigate, plan, implement (TDD), verify, finalize as PR. MUST use this skill whenever the user wants to start, tackle, pick up, implement, or work on a work item from docs/work-items.md. Triggers on any mention of work items by number ("item 5", "item #5", "#5"), by name ("pre-trade balance validation", "quote command", "health check"), or by sequence ("next work item", "next item on the board", "next undone item", "next P1 item", "whatever is next"). Also triggers on phrases like "let's work on", "start implementing", "tackle item", "knock out", "pick up", "can we do item" when referring to the work items board. Does NOT trigger for: running tests, reviewing PRs, listing remaining items, fixing bugs, or explaining code.
+description: Work item pipeline for pumpfun-cli — investigate, plan, implement (TDD), verify, finalize as PR. MUST use this skill whenever the user wants to start, tackle, pick up, implement, or work on a work item. Triggers on any mention of work items by number ("item 5", "item #5", "#5", "B-06"), by name ("pre-trade balance validation", "quote command", "health check"), or by sequence ("next work item", "next item on the board", "next undone item", "next P1 item", "whatever is next"). Also triggers on phrases like "let's work on", "start implementing", "tackle item", "knock out", "pick up", "can we do item" when referring to work items. Does NOT trigger for: running tests, reviewing PRs, listing remaining items, fixing bugs, or explaining code.
 ---
 
 # Work Item Pipeline
 
-Automate work item execution from `docs/work-items.md` through a 5-stage gated pipeline.
+Automate work item execution through a 5-stage gated pipeline.
 
 ## Invocation
 
@@ -13,9 +13,9 @@ Automate work item execution from `docs/work-items.md` through a 5-stage gated p
 
 ## Step 0: Resolve the Target Item
 
-1. Read `docs/work-items.md`
-2. If a number was provided, find the item with that number (e.g., `### 5.` or `### #5`)
-3. If no number was provided, find the lowest-numbered item NOT marked with `~~` strikethrough or `✅ Done`, following the "Recommended Implementation Order" section
+1. Resolve the work item from context — the user may provide a number, ID (e.g., "B-06"), title, or description. The item may come from a backlog, a conversation, or a direct request.
+2. If a specific item was identified, extract its details.
+3. If no specific item was given, ask the user which item to work on.
 4. Extract:
    - `ITEM_NUMBER`: the item number
    - `ITEM_TITLE`: the short title (e.g., "Pre-trade balance validation")
@@ -122,7 +122,7 @@ Automate work item execution from `docs/work-items.md` through a 5-stage gated p
 
 | Failure | Response |
 |---------|----------|
-| Item not found in work-items.md | Report error, list available undone items |
+| Item not found or unclear | Report error, ask the user to clarify |
 | Item already marked Done | Report it's done, ask user to pick another |
 | Stage 1 finds item not feasible | Present findings, recommend abort |
 | Stage 3 cannot get tests green | Present blockers after 2 attempts, offer re-run/abort/manual |

@@ -22,6 +22,7 @@ SURFPOOL_PORT="${SURFPOOL_RPC##*:}"  # extract port from URL
 SURFPOOL_MANAGED=true
 MINT=""
 GRADUATED_MINT=""
+CASHBACK_MINT=""
 EXTRA_ARGS=()
 SURFPOOL_LOG=$(mktemp /tmp/surfpool-XXXX.log)
 
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --mint)        MINT="$2"; shift 2 ;;
         --graduated)   GRADUATED_MINT="$2"; shift 2 ;;
+        --cashback)    CASHBACK_MINT="$2"; shift 2 ;;
         --running)     SURFPOOL_MANAGED=false; shift ;;
         --rpc)         SURFPOOL_RPC="$2"; shift 2 ;;
         *)             EXTRA_ARGS+=("$1"); shift ;;
@@ -113,11 +115,14 @@ fi
 export SURFPOOL_RPC
 [[ -n "$MINT" ]] && export SURFPOOL_TEST_MINT="$MINT"
 [[ -n "$GRADUATED_MINT" ]] && export SURFPOOL_GRADUATED_MINT="$GRADUATED_MINT"
+[[ -n "$CASHBACK_MINT" ]] && export SURFPOOL_CASHBACK_MINT="$CASHBACK_MINT"
 
 echo ""
 echo "=== Running surfpool integration tests ==="
 echo "RPC: $SURFPOOL_RPC"
 [[ -n "$MINT" ]] && echo "Mint: $MINT"
+[[ -n "$CASHBACK_MINT" ]] && echo "Cashback mint: $CASHBACK_MINT"
+[[ -n "$GRADUATED_MINT" ]] && echo "Graduated mint: $GRADUATED_MINT"
 echo ""
 
 uv run pytest tests/test_surfpool/ --surfpool -v "${EXTRA_ARGS[@]}"
