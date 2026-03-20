@@ -47,11 +47,12 @@ Entry point: `src/pumpfun_cli/cli.py` → `pyproject.toml` `[project.scripts] pu
 
 ```
 src/pumpfun_cli/
-├── cli.py              # Root Typer app, GlobalState, callback
+├── cli.py              # Root Typer app, GlobalState, callback, command registration
+├── group.py            # JsonAwareGroup — allows --json at any argv position
 ├── crypto.py           # AES-256-GCM wallet encryption (scrypt KDF)
 ├── output.py           # render() + error() — TTY-aware output
 ├── commands/           # Thin CLI layer (config, info, launch, tokens, trade, tx_status, wallet)
-├── core/               # Business logic (config, info, launch, pumpswap, tokens, trade, tx_status, wallet)
+├── core/               # Business logic (config, info, launch, pumpswap, tokens, trade, tx_status, validate, wallet)
 └── protocol/           # Solana primitives (address, client, contracts, curve, idl_parser, instructions, pumpswap)
 
 tests/
@@ -63,9 +64,11 @@ tests/
 
 ## Code Conventions
 
-**Output:** Use `render(data, json_mode)` for all output — auto-detects TTY (Rich table) vs pipe (JSON). Use `error(msg, hint, exit_code)` for failures — prints to stderr and raises `SystemExit`. Never use `print()`.
+**Output:** Use `render(data, json_mode)` for all output — returns `True` if it emitted JSON (non-TTY or `--json`), `False` in TTY mode. Commands use `if not render(...):` to branch into human-readable output. Use `error(msg, hint, exit_code)` for failures — prints to stderr and raises `SystemExit`. Never use `print()`.
 
 **Error handling:** `error()` raises `SystemExit` — code after it is unreachable. Core functions return `dict` with `"error"` key for expected failures (graduated tokens, not found, slippage exceeded, insufficient_balance). Catch `ValueError` for wrong wallet password in every command that decrypts. Buy/sell functions perform pre-trade balance validation — SOL balance for buys (including fees + ATA rent), token balance for sells with specific amounts.
+
+**Auto-routing:** When `buy_token` / `sell_token` returns `{"error": "graduated"}`, the command layer in `commands/trade.py` automatically retries via `buy_pumpswap` / `sell_pumpswap` (PumpSwap AMM). Never suppress or swallow the `"graduated"` error in core — the routing decision belongs in the command layer.
 
 **Imports:** stdlib → third-party → local. Example:
 ```python
@@ -84,13 +87,15 @@ from pumpfun_cli.output import render, error
 
 **Async:** All I/O functions are `async def`. Commands bridge with `asyncio.run()`. `RpcClient` is stateless — always call `.close()` in `finally`.
 
-**Config resolution:** `resolve_value(key, env_var, flag)` — flag > env var > config file > default.
+**Config resolution:** `resolve_value(key, flag)` — flag > env var (via internal `ENV_MAP`) > config file > default.
 
 ## Adding a New Command
 
 1. Add `core/my_feature.py` — `async def my_operation(rpc_url, keystore_path, password, ...) -> dict`
 2. Add `commands/my_feature.py` — Typer wrapper that calls core and renders output
-3. Register in `cli.py` with `app.command("my-command")(my_feature_cmd)`
+3. Register in `cli.py`:
+   - Flat command: `app.command("my-command")(my_feature_cmd)`
+   - Subcommand group: `app.add_typer(my_app, name="group-name")`
 4. Add tests in `tests/test_core/test_my_feature.py` with mocked RPC/HTTP
 
 ## Working with Solana Accounts
@@ -104,25 +109,24 @@ data = await client.get_account_data(address)
 state = idl.decode_account_data(data, "BondingCurve", skip_discriminator=True)
 
 # Build instructions
-from pumpfun_cli.protocol.instructions import build_buy_ix
-ixs = build_buy_ix(...)
+from pumpfun_cli.protocol.instructions import build_buy_exact_sol_in_instructions
+ixs = build_buy_exact_sol_in_instructions(idl=idl, mint=mint, user=keypair.pubkey(), ...)
 sig = await client.send_tx(ixs, [keypair], compute_units=..., confirm=True)
 ```
 
 ## Environment
 
 ```bash
-PUMPFUN_RPC=https://...     # Solana RPC endpoint (required for trading)
-PUMPFUN_PASSWORD=...        # Wallet password (for non-interactive use)
+PUMPFUN_RPC=https://...          # Solana RPC endpoint (required for trading)
+PUMPFUN_KEYFILE=/path/to/...     # Path to encrypted wallet keystore
+PUMPFUN_PRIORITY_FEE=200000      # Priority fee in micro-lamports
+PUMPFUN_COMPUTE_UNITS=100000     # Compute unit limit
+PUMPFUN_PASSWORD=...             # Wallet password (read directly in wallet commands, not via resolve_value)
 ```
 
 Config file: `~/.config/pumpfun-cli/config.toml`
 Wallet keystore: `~/.config/pumpfun-cli/wallet.enc`
 
-## Test Fixtures
-
-- Test wallet pubkey: `2kPYzWkeJCiUEpo7yBNX7jYdwmyqXGrKsjetNJdHPfYz` (password: `testpass123`)
-- Test token mint: `72xpy6cejkorDh8gx328CAW3Fq7uCQdCyXkSLAE5to5p` (CLITEST, on bonding curve)
 
 ## Hooks
 
