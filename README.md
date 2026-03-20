@@ -4,6 +4,8 @@ A standalone command-line tool for launching and trading tokens with the [pump.f
 
 Built from experience developing [pumpfun-bot](https://github.com/chainstacklabs/pumpfun-bonkfun-bot), distilled into a stateless CLI designed for humans, scripts, and LLM agents alike.
 
+> Check out also our [skill](https://github.com/chainstacklabs/pumpclaw) for trading on pump.fun with OpenClaw and other agents.
+
 Works on macOS, Linux, and Windows (via [WSL](https://learn.microsoft.com/en-us/windows/wsl/install)). Native Windows is not tested.
 
 ## Install
