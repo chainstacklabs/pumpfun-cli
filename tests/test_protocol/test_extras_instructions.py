@@ -31,7 +31,7 @@ def test_claim_cashback_has_5_accounts():
     assert len(ix.accounts) == 5
     assert ix.program_id == PUMP_PROGRAM
     assert ix.accounts[0].pubkey == _USER
-    assert ix.accounts[0].is_signer is True
+    assert ix.accounts[0].is_signer is False
     assert ix.accounts[0].is_writable is True
 
 
@@ -74,8 +74,22 @@ def test_collect_creator_fee_has_5_accounts():
     assert ix.data[:8] == COLLECT_CREATOR_FEE_DISCRIMINATOR
 
 
-def test_collect_coin_creator_fee_has_7_accounts():
+def test_claim_cashback_user_not_signer():
+    """claim_cashback account[0] (user) must be is_signer=False per IDL."""
+    idl = IDLParser(str(IDL_PATH))
+    ix = build_claim_cashback_instruction(idl=idl, user=_USER)
+    assert ix.accounts[0].pubkey == _USER
+    assert ix.accounts[0].is_signer is False
+
+
+def test_collect_coin_creator_fee_has_8_accounts():
     ix = build_collect_coin_creator_fee_instruction(creator=_USER)
-    assert len(ix.accounts) == 7
+    assert len(ix.accounts) == 8
     assert ix.program_id == PUMP_AMM_PROGRAM
     assert ix.data[:8] == COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR
+
+
+def test_collect_coin_creator_fee_last_account_is_program():
+    """collect_coin_creator_fee 8th account must be PUMP_AMM_PROGRAM."""
+    ix = build_collect_coin_creator_fee_instruction(creator=_USER)
+    assert ix.accounts[7].pubkey == PUMP_AMM_PROGRAM

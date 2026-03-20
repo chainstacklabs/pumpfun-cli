@@ -39,8 +39,9 @@ from pumpfun_cli.protocol.contracts import (
 )
 from pumpfun_cli.protocol.idl_parser import IDLParser
 
-# Trailing bytes appended after the two u64 args (track_volume flag).
-_TRACK_VOLUME = bytes([1, 1])
+# OptionBool(true) = 1 byte: the IDL defines OptionBool as struct { bool },
+# so it serialises to a single 0x01 byte, NOT 2 bytes (Option<bool>).
+_TRACK_VOLUME = bytes([1])
 
 
 def build_buy_instructions(
@@ -103,10 +104,7 @@ def build_buy_instructions(
 
     discriminators = idl.get_instruction_discriminators()
     instruction_data = (
-        discriminators["buy"]
-        + struct.pack("<Q", token_amount)
-        + struct.pack("<Q", max_sol_cost)
-        + _TRACK_VOLUME
+        discriminators["buy"] + struct.pack("<Q", token_amount) + struct.pack("<Q", max_sol_cost)
     )
 
     buy_ix = Instruction(
@@ -180,7 +178,6 @@ def build_buy_exact_sol_in_instructions(
         BUY_EXACT_SOL_IN_DISCRIMINATOR
         + struct.pack("<Q", spendable_sol_in)
         + struct.pack("<Q", min_tokens_out)
-        + _TRACK_VOLUME
     )
 
     buy_ix = Instruction(
@@ -254,7 +251,6 @@ def build_sell_instructions(
         discriminators["sell"]
         + struct.pack("<Q", token_amount)
         + struct.pack("<Q", min_sol_output)
-        + _TRACK_VOLUME
     )
 
     sell_ix = Instruction(
@@ -323,7 +319,7 @@ def build_create_instructions(
         AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
         # Mayhem accounts are always required by create_v2 per IDL,
         # regardless of is_mayhem_mode flag value.
-        AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True),
         AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
         AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
         AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
@@ -369,7 +365,7 @@ def build_extend_account_instruction(
     """
     accounts = [
         AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=user, is_signer=False, is_writable=False),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
@@ -486,7 +482,10 @@ def build_pumpswap_buy_instructions(
     ]
 
     instruction_data = (
-        PUMPSWAP_BUY_DISCRIMINATOR + struct.pack("<Q", amount_out) + struct.pack("<Q", max_sol_in)
+        PUMPSWAP_BUY_DISCRIMINATOR
+        + struct.pack("<Q", amount_out)
+        + struct.pack("<Q", max_sol_in)
+        + _TRACK_VOLUME
     )
 
     buy_ix = Instruction(
@@ -591,6 +590,7 @@ def build_pumpswap_buy_exact_quote_in_instructions(
         PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR
         + struct.pack("<Q", spendable_quote_in)
         + struct.pack("<Q", min_base_amount_out)
+        + _TRACK_VOLUME
     )
 
     buy_ix = Instruction(
@@ -705,7 +705,7 @@ def build_claim_cashback_instruction(
     from pumpfun_cli.protocol.address import find_user_volume_accumulator
 
     accounts = [
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=user, is_signer=False, is_writable=True),
         AccountMeta(pubkey=find_user_volume_accumulator(user), is_signer=False, is_writable=True),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
@@ -880,6 +880,7 @@ def build_collect_coin_creator_fee_instruction(
         AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True),
         AccountMeta(pubkey=creator_wsol_ata, is_signer=False, is_writable=True),
         AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
     ]
 
     return Instruction(
