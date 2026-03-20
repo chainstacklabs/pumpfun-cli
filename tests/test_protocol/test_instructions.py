@@ -222,9 +222,9 @@ def test_create_v2_mayhem_program_is_writable():
 
 
 def test_extend_account_user_not_writable():
-    """extend_account account[1] (user) must be is_writable=False, is_signer=True per IDL."""
+    """extend_account account[1] (user) must be is_writable=False, is_signer=False per IDL."""
     idl = IDLParser(str(IDL_PATH))
     ix = build_extend_account_instruction(idl=idl, bonding_curve=_BC, user=_USER)
     assert ix.accounts[1].pubkey == _USER
-    assert ix.accounts[1].is_signer is True
+    assert ix.accounts[1].is_signer is False
     assert ix.accounts[1].is_writable is False

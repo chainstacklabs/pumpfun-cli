@@ -365,7 +365,7 @@ def build_extend_account_instruction(
     """
     accounts = [
         AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=False),
+        AccountMeta(pubkey=user, is_signer=False, is_writable=False),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),

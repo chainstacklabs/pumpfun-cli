@@ -315,6 +315,7 @@ for t in tokens:
 
         AMM_BUY_OK=false
         AMM_MINT=""
+        AMM_OVERFLOW_ONLY=true
         while IFS= read -r CANDIDATE; do
             [[ -z "$CANDIDATE" ]] && continue
             AMM_OUT=$(uv run pumpfun buy "$CANDIDATE" 0.001 --slippage 50 --force-amm --confirm 2>&1)
@@ -328,6 +329,7 @@ for t in tokens:
                 continue
             else
                 # Non-overflow failure — record and stop
+                AMM_OVERFLOW_ONLY=false
                 record "PumpSwap" "buy --force-amm --confirm" "FAIL" "$(echo "$AMM_OUT" | head -1 | cut -c1-60)"
                 break
             fi
@@ -353,7 +355,7 @@ for t in tokens:
                     record "PumpSwap" "sell all --confirm" "FAIL" "Failed after retry"
                 fi
             fi
-        elif [[ "$AMM_BUY_OK" == "false" ]] && [[ -z "$AMM_MINT" ]]; then
+        elif [[ "$AMM_OVERFLOW_ONLY" == "true" ]]; then
             record "PumpSwap" "buy --force-amm --confirm" "ISSUE" "All graduated pools hit error 6023"
         fi
     else
@@ -373,9 +375,14 @@ for t in tokens:
     LAUNCH_EXIT=$?
     echo "$LAUNCH_OUT" > "$LAST_OUTPUT_FILE"
     if [[ $LAUNCH_EXIT -eq 0 ]]; then
-        record "Launch" "launch" "PASS"
         LAUNCHED_MINT=$(echo "$LAUNCH_OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mint',''))" 2>/dev/null)
-        echo "  Launched: $LAUNCHED_MINT"
+        if [[ -n "$LAUNCHED_MINT" ]]; then
+            record "Launch" "launch" "PASS"
+            echo "  Launched: $LAUNCHED_MINT"
+        else
+            record "Launch" "launch" "FAIL" "Invalid --json payload (missing mint)"
+            LAUNCHED_MINT=""
+        fi
     else
         LAUNCH_ERR=$(echo "$LAUNCH_OUT" | grep -m1 "Error:" | cut -c1-60)
         [[ -z "$LAUNCH_ERR" ]] && LAUNCH_ERR="exit=$LAUNCH_EXIT"
@@ -388,9 +395,14 @@ for t in tokens:
     LAUNCH_BUY_EXIT=$?
     echo "$LAUNCH_BUY_OUT" > "$LAST_OUTPUT_FILE"
     if [[ $LAUNCH_BUY_EXIT -eq 0 ]]; then
-        record "Launch" "launch --buy 0.001" "PASS"
         LAUNCHED_BUY_MINT=$(echo "$LAUNCH_BUY_OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mint',''))" 2>/dev/null)
-        echo "  Launched+bought: $LAUNCHED_BUY_MINT"
+        if [[ -n "$LAUNCHED_BUY_MINT" ]]; then
+            record "Launch" "launch --buy 0.001" "PASS"
+            echo "  Launched+bought: $LAUNCHED_BUY_MINT"
+        else
+            record "Launch" "launch --buy 0.001" "FAIL" "Invalid --json payload (missing mint)"
+            LAUNCHED_BUY_MINT=""
+        fi
 
         # Sell from the launched token to test full cycle
         if [[ -n "$LAUNCHED_BUY_MINT" ]]; then
