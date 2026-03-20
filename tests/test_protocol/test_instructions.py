@@ -14,6 +14,7 @@ from pumpfun_cli.protocol.instructions import (
     build_buy_exact_sol_in_instructions,
     build_buy_instructions,
     build_create_instructions,
+    build_extend_account_instruction,
     build_sell_instructions,
 )
 
@@ -165,3 +166,65 @@ def test_create_instructions_mayhem_and_cashback():
     # Last byte = cashback true, second-to-last = mayhem true
     assert create_ix.data[-1:] == b"\x01"
     assert create_ix.data[-2:-1] == b"\x01"
+
+
+def test_sell_instruction_data_no_track_volume():
+    """sell instruction data should be 24 bytes: 8 disc + 8 amount + 8 min_sol. No _TRACK_VOLUME."""
+    idl = IDLParser(str(IDL_PATH))
+    ixs = build_sell_instructions(
+        idl=idl,
+        mint=_MINT,
+        user=_USER,
+        bonding_curve=_BC,
+        assoc_bc=_ABC,
+        creator=_USER,
+        is_mayhem=False,
+        token_amount=1000,
+        min_sol_output=0,
+    )
+    sell_ix = ixs[0]
+    assert len(bytes(sell_ix.data)) == 24  # 8 + 8 + 8, no trailing track_volume
+
+
+def test_sell_instruction_data_no_track_volume_with_cashback():
+    """sell with is_cashback=True also has 24-byte data (no _TRACK_VOLUME)."""
+    idl = IDLParser(str(IDL_PATH))
+    ixs = build_sell_instructions(
+        idl=idl,
+        mint=_MINT,
+        user=_USER,
+        bonding_curve=_BC,
+        assoc_bc=_ABC,
+        creator=_USER,
+        is_mayhem=False,
+        token_amount=1000,
+        min_sol_output=0,
+        is_cashback=True,
+    )
+    sell_ix = ixs[0]
+    assert len(bytes(sell_ix.data)) == 24
+
+
+def test_create_v2_mayhem_program_is_writable():
+    """create_v2 account[9] (MAYHEM_PROGRAM_ID) must be is_writable=True per IDL."""
+    idl = IDLParser(str(IDL_PATH))
+    ixs = build_create_instructions(
+        idl=idl,
+        mint=_MINT,
+        user=_USER,
+        name="Test",
+        symbol="TST",
+        uri="https://example.com",
+    )
+    create_ix = ixs[0]
+    assert create_ix.accounts[9].pubkey == MAYHEM_PROGRAM_ID
+    assert create_ix.accounts[9].is_writable is True
+
+
+def test_extend_account_user_not_writable():
+    """extend_account account[1] (user) must be is_writable=False, is_signer=True per IDL."""
+    idl = IDLParser(str(IDL_PATH))
+    ix = build_extend_account_instruction(idl=idl, bonding_curve=_BC, user=_USER)
+    assert ix.accounts[1].pubkey == _USER
+    assert ix.accounts[1].is_signer is True
+    assert ix.accounts[1].is_writable is False

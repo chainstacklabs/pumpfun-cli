@@ -251,9 +251,9 @@ class TestSellInstructionData:
         return ixs[0].data
 
     def test_sell_data_length(self):
-        """Sell data: 8 (disc) + 8 (amount) + 8 (min_sol) + 2 (track_volume) = 26 bytes."""
+        """Sell data: 8 (disc) + 8 (amount) + 8 (min_sol) = 24 bytes (no track_volume)."""
         data = self._build_sell_data(is_cashback=False)
-        assert len(data) == 26
+        assert len(data) == 24
 
     def test_sell_data_same_regardless_of_cashback(self):
         """Instruction data is identical for cashback vs non-cashback (only accounts differ)."""

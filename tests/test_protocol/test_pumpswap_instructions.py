@@ -163,3 +163,41 @@ def test_pumpswap_buy_exact_quote_in_discriminator():
     buy_ix = ixs[-1]
     assert buy_ix.data[:8] == PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR
     assert len(buy_ix.accounts) == 24
+
+
+def test_pumpswap_buy_data_has_track_volume():
+    """PumpSwap buy instruction data should be 25 bytes: 8 disc + 8 + 8 + 1 OptionBool."""
+    ixs = build_pumpswap_buy_instructions(
+        user=_USER,
+        pool_address=_POOL,
+        pool=_POOL_DATA,
+        token_program_id=TOKEN_PROGRAM,
+        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
+        fee_recipient_ata=_FEE_RECIPIENT_ATA,
+        amount_out=1_000_000,
+        max_sol_in=100_000_000,
+        sol_wrap_lamports=110_000_000,
+    )
+    buy_ix = ixs[-1]
+    data = bytes(buy_ix.data)
+    assert len(data) == 25  # 8 + 8 + 8 + 1
+    assert data[-1:] == bytes([1])
+
+
+def test_pumpswap_buy_exact_quote_in_data_has_track_volume():
+    """PumpSwap buy_exact_quote_in data should be 25 bytes with trailing OptionBool."""
+    ixs = build_pumpswap_buy_exact_quote_in_instructions(
+        user=_USER,
+        pool_address=_POOL,
+        pool=_POOL_DATA,
+        token_program_id=TOKEN_PROGRAM,
+        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
+        fee_recipient_ata=_FEE_RECIPIENT_ATA,
+        spendable_quote_in=100_000_000,
+        min_base_amount_out=1_000_000,
+        sol_wrap_lamports=110_000_000,
+    )
+    buy_ix = ixs[-1]
+    data = bytes(buy_ix.data)
+    assert len(data) == 25
+    assert data[-1:] == bytes([1])
