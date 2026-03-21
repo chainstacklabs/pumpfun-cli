@@ -57,6 +57,7 @@ ENV_MAP = {
     "compute_units": "PUMPFUN_COMPUTE_UNITS",
 }
 
+KNOWN_KEYS: frozenset[str] = frozenset(ENV_MAP)
 
 def resolve_value(key: str, flag: str | None = None) -> str | None:
     if flag is not None:

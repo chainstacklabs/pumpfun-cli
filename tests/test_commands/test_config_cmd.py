@@ -83,9 +83,16 @@ def test_config_get_json_trailing(tmp_path, monkeypatch):
 
 
 def test_config_set_unknown_key(tmp_path, monkeypatch):
-    """config set rejects unknown config keys."""
+    """config set rejects unknown config keys and does not persist them."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     result = runner.invoke(app, ["config", "set", "rpcc", "https://example.com"])
     assert result.exit_code != 0
     assert "unknown config key" in result.output.lower()
     assert "valid keys" in result.output.lower()
+
+    # Assert the invalid key was not persisted
+    list_result = runner.invoke(app, ["--json", "config", "list"])
+    assert list_result.exit_code == 0
+    import json
+    data = json.loads(list_result.output) if list_result.output.strip() else {}
+    assert "rpcc" not in data

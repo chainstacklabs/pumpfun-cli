@@ -2,7 +2,7 @@
 
 import typer
 
-from pumpfun_cli.core.config import delete_config_value, load_config, save_config_value
+from pumpfun_cli.core.config import KNOWN_KEYS, delete_config_value, load_config, save_config_value
 from pumpfun_cli.group import JsonAwareGroup
 from pumpfun_cli.output import error, render
 
@@ -17,8 +17,6 @@ def _config_callback(ctx: typer.Context):
         typer.echo(ctx.get_help())
         raise SystemExit(0)
 
-
-KNOWN_KEYS = {"rpc", "keyfile", "priority_fee", "compute_units"}
 
 
 @app.command("set")
