@@ -1,47 +1,52 @@
-"""PumpSwap AMM buy/sell execution and info."""
+"""PumpSwap AMM buy/sell execution and info.
+
+Trades go to the canonical pool a pump.fun curve graduated into, derived from
+the mint and the curve's quote mint. Amounts are in that pool's quote asset.
+"""
 
 from pathlib import Path
 
-from spl.token.instructions import get_associated_token_address
+from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
-from pumpfun_cli.protocol.address import derive_amm_user_volume_accumulator
+from pumpfun_cli.protocol.address import (
+    derive_amm_user_volume_accumulator,
+    derive_bonding_curve,
+    find_ata,
+)
 from pumpfun_cli.protocol.client import RpcClient, TransactionFailedError
 from pumpfun_cli.protocol.contracts import (
     ATA_RENT_LAMPORTS,
     LAMPORTS_PER_SOL,
-    POOL_MAYHEM_MODE_MIN_SIZE,
-    POOL_MAYHEM_MODE_OFFSET,
     PUMPSWAP_BUY_COMPUTE_UNITS,
     PUMPSWAP_PRIORITY_FEE,
     PUMPSWAP_SELL_COMPUTE_UNITS,
     PUMPSWAP_SLIPPAGE_ERROR_CODES,
     SOL_RENT_EXEMPT_MIN,
-    TOKEN_DECIMALS,
+    WSOL_MINT,
 )
+from pumpfun_cli.protocol.curve import parse_bonding_curve
 from pumpfun_cli.protocol.instructions import (
     build_init_amm_user_volume_accumulator,
     build_pumpswap_buy_exact_quote_in_instructions,
     build_pumpswap_sell_instructions,
 )
 from pumpfun_cli.protocol.pumpswap import (
-    get_fee_recipients,
+    get_global_config,
     get_pool_balances,
     get_pool_by_mint,
-    get_token_program_id,
     parse_pool_data,
+    pick_fee_recipients,
+    pool_price,
+    resolve_pool_tokens,
 )
+from pumpfun_cli.protocol.quote import is_sol, quote_symbol
 
-
-def _estimate_buy_required_lamports(
-    sol_lamports: int,
-    priority_fee: int,
-    compute_units: int,
-) -> int:
-    """Estimate total lamports required for a PumpSwap buy transaction."""
-    fee_lamports = priority_fee * compute_units // 1_000_000
-    return sol_lamports + fee_lamports + ATA_RENT_LAMPORTS + SOL_RENT_EXEMPT_MIN
+_BPS = 10_000
+# Headroom wrapped on top of a SOL buy. The throwaway WSOL account is closed in
+# the same transaction, so whatever is not spent comes straight back.
+_WSOL_FUNDING_BUFFER = 1.1
 
 
 def _handle_tx_error(exc: TransactionFailedError, slippage_codes: set[int]) -> dict:
@@ -59,12 +64,35 @@ def _handle_tx_error(exc: TransactionFailedError, slippage_codes: set[int]) -> d
     }
 
 
+async def _load_pool(client: RpcClient, mint: Pubkey) -> tuple[Pubkey, dict, dict]:
+    """(pool address, parsed pool, token programs and decimals) for a graduated coin.
+
+    The pool's quote mint is the curve's, so the curve is read first when it
+    still exists; a coin with no curve is looked up against SOL.
+
+    Raises:
+        RuntimeError: If the pool does not exist
+    """
+    quote_mint = WSOL_MINT
+    resp = await client.get_account_info(derive_bonding_curve(mint))
+    if resp.value:
+        quote_mint = parse_bonding_curve(bytes(resp.value.data))["quote_mint"]
+    pool_address, pool_data = await get_pool_by_mint(client, mint, quote_mint)
+    pool = parse_pool_data(pool_data)
+    tokens = await resolve_pool_tokens(client, pool)
+    return pool_address, pool, tokens
+
+
+def _total_fee_bps(config: dict) -> int:
+    return config["lp_fee_bps"] + config["protocol_fee_bps"] + config["coin_creator_fee_bps"]
+
+
 async def buy_pumpswap(
     rpc_url: str,
     keystore_path: str,
     password: str,
     mint_str: str,
-    sol_amount: float,
+    amount: float,
     slippage: int = 15,
     rpc_timeout: float = 30.0,
     confirm: bool = False,
@@ -72,116 +100,114 @@ async def buy_pumpswap(
     compute_units: int | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """Buy tokens via PumpSwap AMM."""
+    """Spend exactly `amount` of the pool's quote asset on PumpSwap (buy_exact_quote_in)."""
     keypair = decrypt_keypair(Path(keystore_path), password)
     mint = parse_pubkey(mint_str, "mint address")
     if mint is None:
         return invalid_pubkey_error(mint_str, "mint address")
     client = RpcClient(rpc_url, timeout=rpc_timeout)
     try:
-        pool_address, pool_data = await get_pool_by_mint(client, mint)
-        pool = parse_pool_data(pool_data)
-
-        token_program_id = await get_token_program_id(client, mint)
-        fee_recipient, fee_recipient_ata = await get_fee_recipients(client, pool_data)
+        pool_address, pool, tokens = await _load_pool(client, mint)
+        config = await get_global_config(client)
         base_balance, quote_balance = await get_pool_balances(client, pool)
-
         if quote_balance <= 0 or base_balance <= 0:
             return {"error": "no_liquidity", "message": "Pool has no liquidity."}
 
-        sol_lamports = int(sol_amount * LAMPORTS_PER_SOL)
-        # Use buy_exact_quote_in: specify exact SOL to spend, minimum tokens to receive.
-        # This avoids u64 overflow in the program's buy path on high-liquidity pools.
-        spendable_quote_in = sol_lamports
-        # Estimate minimum tokens out using constant-product AMM formula with fee discount
-        effective_sol = sol_lamports * 99 // 100  # ~1% fee estimate
-        estimated_tokens = base_balance * effective_sol // (quote_balance + effective_sol)
-        min_base_amount_out = estimated_tokens * (100 - slippage) // 100
+        quote_mint = pool["quote_mint"]
+        symbol = quote_symbol(quote_mint)
+        base_decimals = tokens["base_decimals"]
+        quote_decimals = tokens["quote_decimals"]
+        user = keypair.pubkey()
 
-        # Pre-trade SOL balance validation
+        amount_raw = int(amount * 10**quote_decimals)
+        effective_in = amount_raw * (_BPS - _total_fee_bps(config)) // _BPS
+        estimated_tokens = base_balance * effective_in // (quote_balance + effective_in)
+        min_base_amount_out = max(1, estimated_tokens * (100 - slippage) // 100)
+
         eff_priority_fee = priority_fee if priority_fee is not None else PUMPSWAP_PRIORITY_FEE
         eff_compute_units = (
             compute_units if compute_units is not None else PUMPSWAP_BUY_COMPUTE_UNITS
         )
-        required_lamports = _estimate_buy_required_lamports(
-            sol_lamports, eff_priority_fee, eff_compute_units
+        wsol_funding = int(amount_raw * _WSOL_FUNDING_BUFFER) if is_sol(quote_mint) else 0
+        fee_lamports = eff_priority_fee * eff_compute_units // 1_000_000
+        required_lamports = (
+            wsol_funding + fee_lamports + 2 * ATA_RENT_LAMPORTS + SOL_RENT_EXEMPT_MIN
         )
-        wallet_balance = await client.get_balance(keypair.pubkey())
+        wallet_balance = await client.get_balance(user)
+        shortfall = None
+        if wallet_balance < required_lamports:
+            shortfall = (
+                f"Wallet has {wallet_balance / LAMPORTS_PER_SOL:.6f} SOL"
+                f" but trade requires ~{required_lamports / LAMPORTS_PER_SOL:.6f} SOL"
+            )
+        elif not is_sol(quote_mint):
+            held = await client.get_token_account_balance(
+                find_ata(user, quote_mint, tokens["quote_token_program"])
+            )
+            if held < amount_raw:
+                shortfall = (
+                    f"Wallet holds {held / 10**quote_decimals} {symbol}"
+                    f" but the buy spends {amount} {symbol}"
+                )
 
         if dry_run:
-            spot_price = quote_balance / base_balance if base_balance > 0 else 0
-            expected_tokens_human = estimated_tokens / (10**TOKEN_DECIMALS)
-            effective_price = (
-                sol_amount / expected_tokens_human if expected_tokens_human > 0 else 0
-            )
-            spot_price_sol = spot_price * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+            spot_price = pool_price(base_balance, quote_balance, base_decimals, quote_decimals)
+            expected_tokens = estimated_tokens / 10**base_decimals
+            effective_price = amount / expected_tokens if expected_tokens > 0 else 0
             price_impact = (
-                (effective_price - spot_price_sol) / spot_price_sol * 100
-                if spot_price_sol > 0
-                else 0
+                (effective_price - spot_price) / spot_price * 100 if spot_price > 0 else 0
             )
             result = {
                 "dry_run": True,
                 "action": "buy",
                 "venue": "pumpswap",
                 "mint": mint_str,
-                "sol_in": sol_amount,
-                "expected_tokens": expected_tokens_human,
-                "effective_price_sol": effective_price,
-                "spot_price_sol": spot_price_sol,
+                "quote_mint": str(quote_mint),
+                "quote_symbol": symbol,
+                "quote_in": amount,
+                "expected_tokens": expected_tokens,
+                "effective_price": effective_price,
+                "spot_price": spot_price,
                 "price_impact_pct": round(price_impact, 4),
-                "min_tokens_out": min_base_amount_out / (10**TOKEN_DECIMALS),
+                "min_tokens_out": min_base_amount_out / 10**base_decimals,
                 "slippage_pct": slippage,
             }
-            if wallet_balance < required_lamports:
-                result["balance_warning"] = (
-                    f"Wallet has {wallet_balance / LAMPORTS_PER_SOL:.6f} SOL"
-                    f" but trade requires ~{required_lamports / LAMPORTS_PER_SOL:.6f} SOL"
-                )
+            if shortfall:
+                result["balance_warning"] = shortfall
             return result
 
-        if wallet_balance < required_lamports:
+        if shortfall:
             return {
                 "error": "insufficient_balance",
-                "message": (
-                    f"Insufficient SOL balance. Have {wallet_balance / LAMPORTS_PER_SOL:.6f}"
-                    f" SOL, need ~{required_lamports / LAMPORTS_PER_SOL:.6f} SOL."
-                ),
+                "message": f"Insufficient balance. {shortfall}.",
                 "available_sol": wallet_balance / LAMPORTS_PER_SOL,
                 "required_sol": required_lamports / LAMPORTS_PER_SOL,
             }
 
-        # Wrap enough SOL to cover the spend plus a small buffer
-        wrap_lamports = int(sol_amount * 1.1 * LAMPORTS_PER_SOL)
-        if wrap_lamports < spendable_quote_in:
-            wrap_lamports = spendable_quote_in
-
+        fee_recipient, buyback_recipient = pick_fee_recipients(config, pool["is_mayhem_mode"])
         ixs = build_pumpswap_buy_exact_quote_in_instructions(
-            user=keypair.pubkey(),
+            user=user,
             pool_address=pool_address,
             pool=pool,
-            token_program_id=token_program_id,
+            tokens=tokens,
             fee_recipient=fee_recipient,
-            fee_recipient_ata=fee_recipient_ata,
-            spendable_quote_in=spendable_quote_in,
+            buyback_recipient=buyback_recipient,
+            spendable_quote_in=amount_raw,
             min_base_amount_out=min_base_amount_out,
-            sol_wrap_lamports=wrap_lamports,
+            wsol_funding=wsol_funding,
         )
 
-        # Init user volume accumulator if it doesn't exist
-        user_vol = derive_amm_user_volume_accumulator(keypair.pubkey())
+        user_vol = derive_amm_user_volume_accumulator(user)
         vol_resp = await client.get_account_info(user_vol)
         if not vol_resp.value:
-            ixs.insert(0, build_init_amm_user_volume_accumulator(keypair.pubkey()))
+            ixs.insert(0, build_init_amm_user_volume_accumulator(user))
 
         try:
             sig = await client.send_tx(
                 ixs,
                 [keypair],
-                compute_units=compute_units
-                if compute_units is not None
-                else PUMPSWAP_BUY_COMPUTE_UNITS,
-                priority_fee=priority_fee if priority_fee is not None else PUMPSWAP_PRIORITY_FEE,
+                compute_units=eff_compute_units,
+                priority_fee=eff_priority_fee,
                 confirm=confirm,
             )
         except TransactionFailedError as exc:
@@ -190,15 +216,17 @@ async def buy_pumpswap(
             "action": "buy",
             "venue": "pumpswap",
             "mint": mint_str,
-            "sol_spent": sol_amount,
-            "tokens_received": estimated_tokens / (10**TOKEN_DECIMALS),
+            "quote_mint": str(quote_mint),
+            "quote_symbol": symbol,
+            "quote_spent": amount,
+            "tokens_received": estimated_tokens / 10**base_decimals,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
         if confirm:
             result["confirmed"] = True
         return result
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {"error": "pumpswap_error", "message": str(exc)}
     finally:
         await client.close()
@@ -217,85 +245,83 @@ async def sell_pumpswap(
     compute_units: int | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """Sell tokens via PumpSwap AMM."""
+    """Sell tokens on PumpSwap for the pool's quote asset."""
     keypair = decrypt_keypair(Path(keystore_path), password)
     mint = parse_pubkey(mint_str, "mint address")
     if mint is None:
         return invalid_pubkey_error(mint_str, "mint address")
     client = RpcClient(rpc_url, timeout=rpc_timeout)
     try:
-        pool_address, pool_data = await get_pool_by_mint(client, mint)
-        pool = parse_pool_data(pool_data)
-
-        token_program_id = await get_token_program_id(client, mint)
-        fee_recipient, fee_recipient_ata = await get_fee_recipients(client, pool_data)
-
-        user_token_ata = get_associated_token_address(
-            keypair.pubkey(),
-            mint,
-            token_program_id,
-        )
+        pool_address, pool, tokens = await _load_pool(client, mint)
+        quote_mint = pool["quote_mint"]
+        symbol = quote_symbol(quote_mint)
+        base_decimals = tokens["base_decimals"]
+        quote_decimals = tokens["quote_decimals"]
+        user = keypair.pubkey()
+        user_token_ata = find_ata(user, mint, tokens["base_token_program"])
 
         if amount_str.lower() == "all":
             token_amount = await client.get_token_account_balance(user_token_ata)
         else:
-            token_amount = int(float(amount_str) * (10**TOKEN_DECIMALS))
-            # Pre-trade token balance validation for specific amounts
+            token_amount = int(float(amount_str) * 10**base_decimals)
             actual_balance = await client.get_token_account_balance(user_token_ata)
             if actual_balance < token_amount:
                 return {
                     "error": "insufficient_balance",
                     "message": (
                         f"Insufficient token balance. Have"
-                        f" {actual_balance / (10**TOKEN_DECIMALS):.6f} tokens,"
-                        f" need {token_amount / (10**TOKEN_DECIMALS):.6f} tokens."
+                        f" {actual_balance / 10**base_decimals:.6f} tokens,"
+                        f" need {token_amount / 10**base_decimals:.6f} tokens."
                     ),
-                    "available_tokens": actual_balance / (10**TOKEN_DECIMALS),
-                    "required_tokens": token_amount / (10**TOKEN_DECIMALS),
+                    "available_tokens": actual_balance / 10**base_decimals,
+                    "required_tokens": token_amount / 10**base_decimals,
                 }
 
         if token_amount <= 0:
             return {"error": "no_tokens", "message": "No tokens to sell."}
 
+        config = await get_global_config(client)
         base_balance, quote_balance = await get_pool_balances(client, pool)
-        # Integer arithmetic: expected_sol_lamports = token_amount * quote_balance / base_balance
-        expected_sol_lamports = token_amount * quote_balance // base_balance
-        min_sol_lamports = expected_sol_lamports * (100 - slippage) // 100
+        if base_balance <= 0 or quote_balance <= 0:
+            return {"error": "no_liquidity", "message": "Pool has no liquidity."}
+        gross_out = token_amount * quote_balance // (base_balance + token_amount)
+        expected_quote = gross_out * (_BPS - _total_fee_bps(config)) // _BPS
+        min_quote_out = max(1, expected_quote * (100 - slippage) // 100)
 
         if dry_run:
-            spot_price = quote_balance / base_balance if base_balance > 0 else 0
-            tokens_human = token_amount / (10**TOKEN_DECIMALS)
-            sol_out_human = expected_sol_lamports / LAMPORTS_PER_SOL
-            effective_price = sol_out_human / tokens_human if tokens_human > 0 else 0
-            spot_price_sol = spot_price * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+            spot_price = pool_price(base_balance, quote_balance, base_decimals, quote_decimals)
+            tokens_human = token_amount / 10**base_decimals
+            quote_out_human = expected_quote / 10**quote_decimals
+            effective_price = quote_out_human / tokens_human if tokens_human > 0 else 0
             price_impact = (
-                (effective_price - spot_price_sol) / spot_price_sol * 100
-                if spot_price_sol > 0
-                else 0
+                (effective_price - spot_price) / spot_price * 100 if spot_price > 0 else 0
             )
             return {
                 "dry_run": True,
                 "action": "sell",
                 "venue": "pumpswap",
                 "mint": mint_str,
+                "quote_mint": str(quote_mint),
+                "quote_symbol": symbol,
                 "tokens_in": tokens_human,
-                "expected_sol": sol_out_human,
-                "effective_price_sol": effective_price,
-                "spot_price_sol": spot_price_sol,
+                "expected_quote": quote_out_human,
+                "effective_price": effective_price,
+                "spot_price": spot_price,
                 "price_impact_pct": round(price_impact, 4),
-                "min_sol_out": min_sol_lamports / LAMPORTS_PER_SOL,
+                "min_quote_out": min_quote_out / 10**quote_decimals,
                 "slippage_pct": slippage,
             }
 
+        fee_recipient, buyback_recipient = pick_fee_recipients(config, pool["is_mayhem_mode"])
         ixs = build_pumpswap_sell_instructions(
-            user=keypair.pubkey(),
+            user=user,
             pool_address=pool_address,
             pool=pool,
-            token_program_id=token_program_id,
+            tokens=tokens,
             fee_recipient=fee_recipient,
-            fee_recipient_ata=fee_recipient_ata,
+            buyback_recipient=buyback_recipient,
             token_amount=token_amount,
-            min_sol_out=min_sol_lamports,
+            min_quote_out=min_quote_out,
         )
 
         try:
@@ -314,15 +340,17 @@ async def sell_pumpswap(
             "action": "sell",
             "venue": "pumpswap",
             "mint": mint_str,
-            "tokens_sold": token_amount / (10**TOKEN_DECIMALS),
-            "sol_received": expected_sol_lamports / LAMPORTS_PER_SOL,
+            "quote_mint": str(quote_mint),
+            "quote_symbol": symbol,
+            "tokens_sold": token_amount / 10**base_decimals,
+            "quote_received": expected_quote / 10**quote_decimals,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
         if confirm:
             result["confirmed"] = True
         return result
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {"error": "pumpswap_error", "message": str(exc)}
     finally:
         await client.close()
@@ -335,25 +363,22 @@ async def get_pumpswap_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30
         return invalid_pubkey_error(mint_str, "mint address")
     client = RpcClient(rpc_url, timeout=rpc_timeout)
     try:
-        pool_address, pool_data = await get_pool_by_mint(client, mint)
-        pool = parse_pool_data(pool_data)
-
+        pool_address, pool, tokens = await _load_pool(client, mint)
         base_balance, quote_balance = await get_pool_balances(client, pool)
-        price = quote_balance / base_balance if base_balance > 0 else 0.0
-
-        is_mayhem = len(pool_data) >= POOL_MAYHEM_MODE_MIN_SIZE and bool(
-            pool_data[POOL_MAYHEM_MODE_OFFSET]
-        )
-
+        base_decimals = tokens["base_decimals"]
+        quote_decimals = tokens["quote_decimals"]
         return {
             "pool_address": str(pool_address),
-            "price_sol": price,
-            "base_reserves": base_balance / (10**TOKEN_DECIMALS),
-            "quote_reserves_sol": quote_balance / LAMPORTS_PER_SOL,
+            "quote_mint": str(pool["quote_mint"]),
+            "quote_symbol": quote_symbol(pool["quote_mint"]),
+            "price": pool_price(base_balance, quote_balance, base_decimals, quote_decimals),
+            "base_reserves": base_balance / 10**base_decimals,
+            "quote_reserves": quote_balance / 10**quote_decimals,
             "creator": str(pool["coin_creator"]),
-            "mayhem_mode": is_mayhem,
+            "mayhem_mode": pool["is_mayhem_mode"],
+            "cashback": pool["is_cashback_coin"],
         }
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {"error": "pumpswap_error", "message": str(exc)}
     finally:
         await client.close()

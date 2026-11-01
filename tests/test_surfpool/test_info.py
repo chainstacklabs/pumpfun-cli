@@ -13,10 +13,10 @@ async def test_get_token_info(surfpool_rpc, active_mint):
     assert "error" not in result, f"Unexpected error: {result}"
     assert result["mint"] == active_mint
     assert result["bonding_curve"]  # non-empty
-    assert result["price_sol"] >= 0
+    assert result["price"] >= 0
     assert 0 <= result["bonding_progress"] <= 100
     assert isinstance(result["graduated"], bool)
-    assert result["real_sol_reserves"] >= 0
+    assert result["real_quote_reserves"] >= 0
     assert result["virtual_sol_reserves"] > 0
     assert result["virtual_token_reserves"] > 0
 

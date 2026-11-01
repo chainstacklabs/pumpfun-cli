@@ -1,153 +1,87 @@
-"""Tests for PumpSwap pool parsing and PDA derivation."""
+"""PumpSwap Pool and GlobalConfig parsing, fee recipients and pricing."""
 
-import struct
-
+import pytest
 from solders.pubkey import Pubkey
 
-from pumpfun_cli.protocol.address import (
-    derive_amm_creator_vault,
-    derive_amm_fee_config,
-    derive_amm_global_volume_accumulator,
-    derive_amm_user_volume_accumulator,
+from pumpfun_cli.protocol.contracts import USDC_MINT
+from pumpfun_cli.protocol.pumpswap import (
+    parse_global_config,
+    parse_pool_data,
+    pick_fee_recipients,
+    pool_price,
 )
-from pumpfun_cli.protocol.pumpswap import parse_pool_data
-
-_USER = Pubkey.from_string("11111111111111111111111111111112")
-_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-
-
-def _build_pool_data() -> bytes:
-    """Build a synthetic pool data blob for testing parse_pool_data."""
-    creator = bytes(_USER)
-    base_mint = bytes(_MINT)
-    quote_mint = bytes(Pubkey.from_string("So11111111111111111111111111111111111111112"))
-    lp_mint = bytes(Pubkey.from_string("11111111111111111111111111111113"))
-    pool_base_token = bytes(Pubkey.from_string("11111111111111111111111111111114"))
-    pool_quote_token = bytes(Pubkey.from_string("11111111111111111111111111111115"))
-    coin_creator = bytes(_USER)
-
-    data = bytearray(243)
-    # discriminator (8 bytes)
-    data[0:8] = b"\x00" * 8
-    # pool_bump (1 byte at offset 8)
-    data[8] = 255
-    # index (u16 at offset 9)
-    struct.pack_into("<H", data, 9, 42)
-    # creator (32 bytes at offset 11)
-    data[11:43] = creator
-    # base_mint (32 bytes at offset 43)
-    data[43:75] = base_mint
-    # quote_mint (32 bytes at offset 75)
-    data[75:107] = quote_mint
-    # lp_mint (32 bytes at offset 107)
-    data[107:139] = lp_mint
-    # pool_base_token_account (32 bytes at offset 139)
-    data[139:171] = pool_base_token
-    # pool_quote_token_account (32 bytes at offset 171)
-    data[171:203] = pool_quote_token
-    # lp_supply (u64 at offset 203)
-    struct.pack_into("<Q", data, 203, 1_000_000)
-    # coin_creator (32 bytes at offset 211)
-    data[211:243] = coin_creator
-
-    return bytes(data)
+from tests.test_core.helpers import (
+    BUYBACK_RECIPIENTS,
+    CREATOR,
+    MINT,
+    PROTOCOL_RECIPIENTS,
+    RESERVED_RECIPIENT,
+    build_global_config_data,
+    build_pool_data,
+)
 
 
-def test_parse_pool_data_fields():
-    data = _build_pool_data()
-    pool = parse_pool_data(data)
-    assert pool["pool_bump"] == 255
-    assert pool["index"] == 42
-    assert pool["creator"] == _USER
-    assert pool["base_mint"] == _MINT
-    assert pool["lp_supply"] == 1_000_000
-    assert pool["coin_creator"] == _USER
-
-
-def test_parse_pool_data_token_accounts():
-    data = _build_pool_data()
-    pool = parse_pool_data(data)
-    assert pool["pool_base_token_account"] == Pubkey.from_string(
-        "11111111111111111111111111111114"
+def test_parse_pool_reads_flags_and_virtual_reserves():
+    base, quote = Pubkey.new_unique(), Pubkey.new_unique()
+    pool = parse_pool_data(
+        build_pool_data(
+            quote_mint=USDC_MINT,
+            base_account=base,
+            quote_account=quote,
+            mayhem=True,
+            cashback=True,
+            virtual_quote=-5,
+            index=3,
+        )
     )
-    assert pool["pool_quote_token_account"] == Pubkey.from_string(
-        "11111111111111111111111111111115"
+    assert pool["base_mint"] == MINT
+    assert pool["quote_mint"] == USDC_MINT
+    assert pool["pool_base_token_account"] == base
+    assert pool["pool_quote_token_account"] == quote
+    assert pool["coin_creator"] == CREATOR
+    assert pool["is_canonical"] is True
+    assert pool["is_mayhem_mode"] is True
+    assert pool["is_cashback_coin"] is True
+    assert pool["virtual_quote_reserves"] == -5
+    assert pool["index"] == 3
+
+
+def test_pool_without_coin_creator_is_not_canonical():
+    assert parse_pool_data(build_pool_data(coin_creator=None))["is_canonical"] is False
+
+
+def test_short_pool_reads_absent_fields_as_unset():
+    pool = parse_pool_data(build_pool_data(mayhem=True)[:243])
+    assert pool["is_mayhem_mode"] is False
+    assert pool["virtual_quote_reserves"] == 0
+
+
+def test_global_config_offsets():
+    config = parse_global_config(
+        build_global_config_data(lp_bps=20, protocol_bps=5, creator_bps=7)
     )
-
-
-# --- PDA derivation tests ---
-
-
-def test_amm_creator_vault_deterministic():
-    a = derive_amm_creator_vault(_USER)
-    b = derive_amm_creator_vault(_USER)
-    assert a == b
-
-
-def test_amm_creator_vault_differs_from_pump_creator_vault():
-    from pumpfun_cli.protocol.address import derive_creator_vault
-
-    amm_vault = derive_amm_creator_vault(_USER)
-    pump_vault = derive_creator_vault(_USER)
-    assert amm_vault != pump_vault
-
-
-def test_amm_fee_config_deterministic():
-    assert derive_amm_fee_config() == derive_amm_fee_config()
-
-
-def test_amm_fee_config_differs_from_pump_fee_config():
-    from pumpfun_cli.protocol.address import find_fee_config
-
-    assert derive_amm_fee_config() != find_fee_config()
-
-
-def test_amm_global_volume_accumulator_deterministic():
-    assert derive_amm_global_volume_accumulator() == derive_amm_global_volume_accumulator()
-
-
-def test_amm_user_volume_accumulator_deterministic():
-    a = derive_amm_user_volume_accumulator(_USER)
-    b = derive_amm_user_volume_accumulator(_USER)
-    assert a == b
-
-
-def test_amm_user_volume_differs_from_pump():
-    from pumpfun_cli.protocol.address import find_user_volume_accumulator
-
-    amm = derive_amm_user_volume_accumulator(_USER)
-    pump = find_user_volume_accumulator(_USER)
-    assert amm != pump
-
-
-# --- Pool PDA derivation tests ---
-
-
-def test_derive_amm_pool_deterministic():
-    """derive_amm_pool returns the same address for the same mint."""
-    from pumpfun_cli.protocol.address import derive_amm_pool
-
-    a = derive_amm_pool(_MINT)
-    b = derive_amm_pool(_MINT)
-    assert a == b
-
-
-def test_derive_amm_pool_matches_migrate_derivation():
-    """derive_amm_pool produces the same PDA as build_migrate_instruction's inline derivation."""
-    from pumpfun_cli.protocol.address import derive_amm_pool, derive_pool_authority
-    from pumpfun_cli.protocol.contracts import PUMP_AMM_PROGRAM, WSOL_MINT
-
-    pool_authority = derive_pool_authority(_MINT)
-    expected, _ = Pubkey.find_program_address(
-        [b"pool", bytes([0, 0]), bytes(pool_authority), bytes(_MINT), bytes(WSOL_MINT)],
-        PUMP_AMM_PROGRAM,
+    assert (config["lp_fee_bps"], config["protocol_fee_bps"], config["coin_creator_fee_bps"]) == (
+        20,
+        5,
+        7,
     )
-    assert derive_amm_pool(_MINT) == expected
+    assert config["protocol_fee_recipients"] == PROTOCOL_RECIPIENTS
+    assert config["reserved_fee_recipient"] == RESERVED_RECIPIENT
+    assert config["buyback_fee_recipients"] == BUYBACK_RECIPIENTS
 
 
-def test_derive_amm_pool_differs_per_mint():
-    """Different mints produce different pool addresses."""
-    from pumpfun_cli.protocol.address import derive_amm_pool
+@pytest.mark.parametrize("mayhem", [False, True])
+def test_fee_recipients(mayhem):
+    config = parse_global_config(build_global_config_data())
+    fee, buyback = pick_fee_recipients(config, mayhem)
+    if mayhem:
+        assert fee == RESERVED_RECIPIENT
+    else:
+        assert fee in PROTOCOL_RECIPIENTS
+    assert buyback in BUYBACK_RECIPIENTS
 
-    other_mint = Pubkey.from_string("So11111111111111111111111111111111111111112")
-    assert derive_amm_pool(_MINT) != derive_amm_pool(other_mint)
+
+def test_pool_price_uses_both_decimals():
+    assert pool_price(1_000_000, 2_000_000_000, 6, 9) == pytest.approx(2.0)
+    assert pool_price(1_000_000_000, 2_000_000, 9, 6) == pytest.approx(2.0)
+    assert pool_price(0, 1, 6, 9) == 0.0

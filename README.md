@@ -65,9 +65,14 @@ pumpfun sell <mint> all
 # Check if a transaction landed
 pumpfun tx-status <signature>
 
-# Launch a token
-pumpfun launch --name "MyToken" --ticker "MTK" --desc "A great token"
+# Launch a token, buying it in the same transaction
+pumpfun launch --name "MyToken" --ticker "MTK" --desc "A great token" --buy 0.1
 ```
+
+Amounts are in the coin's quote asset. Most pump.fun coins are priced in SOL,
+but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
+`info` read it from the coin and label their output with it. Buying such a coin
+spends that asset, so the wallet has to hold it.
 
 ## Commands
 
@@ -83,18 +88,20 @@ Token info (requires RPC):
   pumpfun info <mint>                     Price, bonding progress, reserves
 
 Trading (requires RPC + wallet):
-  pumpfun buy <mint> <sol_amount> [--slippage N] [--dry-run] [--confirm]
-  pumpfun sell <mint> <amount|all> [--slippage N] [--dry-run] [--confirm]
-  pumpfun migrate <mint> [--slippage N] [--confirm]
-  pumpfun claim-cashback <mint> [--confirm]
-  pumpfun collect-creator-fee <mint> [--confirm]
-  pumpfun close-volume-acc <mint> [--confirm]
+  pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--confirm]
+  pumpfun sell <mint> <amount|all> [--slippage N] [--force-amm] [--dry-run] [--confirm]
+  pumpfun migrate <mint> [--confirm]
+  pumpfun claim-cashback [--quote-mint M] [--confirm]
+  pumpfun collect-creator-fee [--quote-mint M] [--confirm]
+  pumpfun close-volume-acc [--confirm]
 
 Transaction inspection (requires RPC):
   pumpfun tx-status <signature>              Confirmation status, slot, fee, errors
 
 Token launch (requires RPC + wallet):
   pumpfun launch --name X --ticker Y --desc Z [--image path] [--buy N]
+                 [--quote-mint M] [--creator-fee-bps N] [--holder-reward]
+                 [--mayhem] [--slippage N] [--confirm]
 
 Wallet management:
   pumpfun wallet create                   Generate + encrypt keypair

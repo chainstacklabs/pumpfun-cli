@@ -46,7 +46,7 @@ Validate: each returns valid JSON arrays, non-empty (except search which may be 
 Find an active bonding-curve mint and a graduated mint from the discovery results above.
 
 ```bash
-uv run pumpfun info <ACTIVE_MINT>             # graduated=false, price_sol > 0
+uv run pumpfun info <ACTIVE_MINT>             # graduated=false, price > 0, quote_symbol set
 uv run pumpfun info <GRADUATED_MINT>          # graduated=true, pool_address present
 uv run pumpfun info 11111111111111111111111111111111  # should error
 ```
@@ -92,16 +92,16 @@ uv run pumpfun sell <ACTIVE_MINT> all --confirm
 - Add a ~5 second delay between buy and sell -- immediate sell after buy often fails with "No tokens to sell" due to RPC state lag (ISSUE-3)
 - If sell fails, retry after a few seconds -- this is a known timing issue, not a code bug
 
-## Group 7: PumpSwap AMM Trading (SPENDS SOL -- CURRENTLY BROKEN)
-
-**Known bug:** PumpSwap buys consistently fail with error 6023 (NotEnoughTokensToSell). Test anyway to check if it has been fixed.
+## Group 7: PumpSwap AMM Trading (SPENDS SOL)
 
 ```bash
 uv run pumpfun buy <GRADUATED_MINT> 0.001 --force-amm --confirm
 uv run pumpfun buy <GRADUATED_MINT> 0.001 --confirm  # auto-route
+uv run pumpfun sell <GRADUATED_MINT> all --confirm
 ```
 
-If still failing with 6023, document and move on.
+A buy on a cashback pool exceeds a v0 transaction and is sent as v1; a failure
+there points at the RPC endpoint refusing v1 sends, not at the instruction.
 
 ## Group 8: Transaction Status (safe, read-only RPC)
 
@@ -123,6 +123,8 @@ uv run pumpfun claim-cashback --confirm       # may succeed or be no-op
 uv run pumpfun close-volume-acc --confirm     # may succeed or be no-op
 uv run pumpfun collect-creator-fee --confirm  # likely "No creator fees"
 uv run pumpfun migrate <ACTIVE_MINT> --confirm  # should error: "not complete"
+uv run pumpfun --json launch --name X --ticker X --desc x --creator-fee-bps 100  # should error: fee needs a QuoteControl mint
+uv run pumpfun --json launch --name X --ticker X --desc x --mayhem --quote-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v  # should error: mayhem needs SOL
 ```
 
 ## Group 10: Wallet Cleanup (SPENDS SOL -- recovers rent)

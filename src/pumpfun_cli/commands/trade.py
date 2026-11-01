@@ -68,7 +68,9 @@ def _require_rpc_and_wallet(ctx: typer.Context) -> tuple:
 def buy(
     ctx: typer.Context,
     mint: str = typer.Argument(..., help="Token mint address"),
-    sol_amount: float = typer.Argument(..., help="Amount of SOL to spend"),
+    amount: float = typer.Argument(
+        ..., help="Amount to spend, in the coin's quote asset (SOL for most coins)"
+    ),
     slippage: int = typer.Option(
         15, "--slippage", help="Slippage tolerance percent (default: 15)"
     ),
@@ -80,7 +82,7 @@ def buy(
         False, "--dry-run", help="Simulate trade without sending transaction"
     ),
 ):
-    """Buy tokens with SOL."""
+    """Buy tokens, spending an exact amount of the coin's quote asset."""
     _validate_mint(mint)
     _validate_slippage(slippage)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
@@ -93,7 +95,7 @@ def buy(
                     keyfile,
                     password,
                     mint,
-                    sol_amount,
+                    amount,
                     slippage,
                     confirm=confirm,
                     dry_run=dry_run,
@@ -107,7 +109,7 @@ def buy(
                     keyfile,
                     password,
                     mint,
-                    sol_amount,
+                    amount,
                     slippage,
                     confirm=confirm,
                     dry_run=dry_run,
@@ -121,14 +123,14 @@ def buy(
                         keyfile,
                         password,
                         mint,
-                        sol_amount,
+                        amount,
                         slippage,
                         confirm=confirm,
                         dry_run=dry_run,
                         **overrides,
                     )
                 )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("dry_run"):
         state = ctx.obj
@@ -136,10 +138,11 @@ def buy(
             typer.echo("Dry run — no transaction sent\n")
             typer.echo(f"  Action:          {result['action']}")
             typer.echo(f"  Venue:           {result['venue']}")
-            typer.echo(f"  SOL in:          {result['sol_in']}")
+            typer.echo(f"  Spend:           {result['quote_in']} {result['quote_symbol']}")
             typer.echo(f"  Expected tokens: {result['expected_tokens']:.6f}")
-            typer.echo(f"  Effective price: {result['effective_price_sol']:.10f} SOL/token")
-            typer.echo(f"  Spot price:      {result['spot_price_sol']:.10f} SOL/token")
+            unit = f"{result['quote_symbol']}/token"
+            typer.echo(f"  Effective price: {result['effective_price']:.10f} {unit}")
+            typer.echo(f"  Spot price:      {result['spot_price']:.10f} {unit}")
             typer.echo(f"  Price impact:    {result['price_impact_pct']:.2f}%")
             typer.echo(
                 f"  Min tokens out:  {result['min_tokens_out']:.6f} ({result['slippage_pct']}% slippage)"
@@ -150,7 +153,10 @@ def buy(
         error(result["message"], exit_code=code)
     state = ctx.obj
     if not render(result, state.json_mode):
-        typer.echo(f"Bought {result['tokens_received']:.2f} tokens for {result['sol_spent']} SOL")
+        typer.echo(
+            f"Bought {result['tokens_received']:.2f} tokens"
+            f" for {result['quote_spent']} {result['quote_symbol']}"
+        )
         typer.echo(f"TX: {result['explorer']}")
 
 
@@ -169,7 +175,7 @@ def sell(
         False, "--dry-run", help="Simulate trade without sending transaction"
     ),
 ):
-    """Sell tokens for SOL."""
+    """Sell tokens for the coin's quote asset (SOL for most coins)."""
     _validate_mint(mint)
     _validate_slippage(slippage)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
@@ -217,7 +223,7 @@ def sell(
                         **overrides,
                     )
                 )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("dry_run"):
         state = ctx.obj
@@ -226,12 +232,14 @@ def sell(
             typer.echo(f"  Action:          {result['action']}")
             typer.echo(f"  Venue:           {result['venue']}")
             typer.echo(f"  Tokens in:       {result['tokens_in']:.6f}")
-            typer.echo(f"  Expected SOL:    {result['expected_sol']:.6f}")
-            typer.echo(f"  Effective price: {result['effective_price_sol']:.10f} SOL/token")
-            typer.echo(f"  Spot price:      {result['spot_price_sol']:.10f} SOL/token")
+            symbol = result["quote_symbol"]
+            typer.echo(f"  Expected out:    {result['expected_quote']:.6f} {symbol}")
+            typer.echo(f"  Effective price: {result['effective_price']:.10f} {symbol}/token")
+            typer.echo(f"  Spot price:      {result['spot_price']:.10f} {symbol}/token")
             typer.echo(f"  Price impact:    {result['price_impact_pct']:.2f}%")
             typer.echo(
-                f"  Min SOL out:     {result['min_sol_out']:.6f} ({result['slippage_pct']}% slippage)"
+                f"  Min out:         {result['min_quote_out']:.6f} {symbol}"
+                f" ({result['slippage_pct']}% slippage)"
             )
         return
     if result.get("error"):
@@ -239,22 +247,29 @@ def sell(
         error(result["message"], exit_code=code)
     state = ctx.obj
     if not render(result, state.json_mode):
-        typer.echo(f"Sold {result['tokens_sold']:.2f} tokens for {result['sol_received']:.4f} SOL")
+        typer.echo(
+            f"Sold {result['tokens_sold']:.2f} tokens"
+            f" for {result['quote_received']:.6f} {result['quote_symbol']}"
+        )
         typer.echo(f"TX: {result['explorer']}")
+
+
+_QUOTE_MINT_HELP = "Quote asset mint to act on (default: SOL)"
 
 
 def claim_cashback(
     ctx: typer.Context,
+    quote_mint: str | None = typer.Option(None, "--quote-mint", help=_QUOTE_MINT_HELP),
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
 ):
-    """Claim volume-based cashback rewards."""
+    """Claim volume-based cashback rewards in one quote asset."""
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
         result = asyncio.run(
-            claim_cashback_core(rpc, keyfile, password, confirm=confirm, **overrides)
+            claim_cashback_core(rpc, keyfile, password, quote_mint, confirm=confirm, **overrides)
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("error"):
         error(result["message"])
@@ -275,7 +290,7 @@ def close_volume_acc(
         result = asyncio.run(
             close_volume_acc_core(rpc, keyfile, password, confirm=confirm, **overrides)
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("error"):
         error(result["message"])
@@ -298,7 +313,7 @@ def migrate(
         result = asyncio.run(
             migrate_token(rpc, keyfile, password, mint, confirm=confirm, **overrides)
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("error"):
         error(result["message"])
@@ -310,21 +325,25 @@ def migrate(
 
 def collect_creator_fee(
     ctx: typer.Context,
+    quote_mint: str | None = typer.Option(None, "--quote-mint", help=_QUOTE_MINT_HELP),
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
 ):
-    """Collect creator fees from pump.fun and PumpSwap vaults."""
+    """Collect creator fees in one quote asset from pump.fun and PumpSwap vaults."""
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
         result = asyncio.run(
-            collect_creator_fees_core(rpc, keyfile, password, confirm=confirm, **overrides)
+            collect_creator_fees_core(
+                rpc, keyfile, password, quote_mint, confirm=confirm, **overrides
+            )
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("error"):
         error(result["message"])
     state = ctx.obj
     if not render(result, state.json_mode):
-        typer.echo(f"Pump.fun fees: {result['pump_recovered_sol']:.6f} SOL")
-        typer.echo(f"PumpSwap fees: {result['pumpswap_recovered_sol']:.6f} SOL")
+        symbol = result["quote_symbol"]
+        typer.echo(f"Pump.fun fees: {result['pump_recovered']:.6f} {symbol}")
+        typer.echo(f"PumpSwap fees: {result['pumpswap_recovered']:.6f} {symbol}")
         typer.echo(f"TX: {result['explorer']}")

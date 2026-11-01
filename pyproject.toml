@@ -1,6 +1,6 @@
 [project]
 name = "pumpfun-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI for pump.fun on Solana — trade, launch, and browse tokens"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -8,11 +8,12 @@ requires-python = ">=3.12"
 dependencies = [
     "typer",
     "httpx",
-    "solana",
+    "solana>=0.40.3",
     "cryptography",
     "python-dotenv",
     "tomli-w",
     "base58>=2.1.1",
+    "solders>=0.29.0",
 ]
 
 [project.scripts]

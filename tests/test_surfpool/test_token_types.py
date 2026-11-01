@@ -70,7 +70,7 @@ async def test_buy_then_sell_cashback_token(
     assert "error" not in sell_result, f"Sell cashback token failed: {sell_result}"
     assert sell_result["action"] == "sell"
     assert sell_result["tokens_sold"] > 0
-    assert sell_result["sol_received"] > 0
+    assert sell_result["quote_received"] > 0
 
 
 # ---------------------------------------------------------------------------

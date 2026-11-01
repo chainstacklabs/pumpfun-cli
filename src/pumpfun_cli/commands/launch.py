@@ -14,14 +14,38 @@ def launch(
     ticker: str = typer.Option(..., "--ticker", help="Token ticker/symbol"),
     desc: str = typer.Option(..., "--desc", help="Token description"),
     image: str | None = typer.Option(None, "--image", help="Path to token image"),
-    buy: float | None = typer.Option(None, "--buy", help="Initial buy amount in SOL"),
-    mayhem: bool = typer.Option(False, "--mayhem", help="Enable mayhem mode"),
-    cashback: bool = typer.Option(False, "--cashback", help="Enable cashback for the token"),
+    buy: float | None = typer.Option(
+        None,
+        "--buy",
+        help="Opening buy, in the quote asset, bought in the same transaction as the create",
+    ),
+    quote_mint: str | None = typer.Option(
+        None,
+        "--quote-mint",
+        help="Price the coin in this mint instead of SOL (e.g. USDC); the wallet must hold it",
+    ),
+    creator_fee_bps: int | None = typer.Option(
+        None,
+        "--creator-fee-bps",
+        help="Creator fee in basis points; only applies to coins priced in a QuoteControl mint",
+    ),
+    holder_reward: bool = typer.Option(
+        False, "--holder-reward", help="Pay the creator fee to holders instead of the creator"
+    ),
+    mayhem: bool = typer.Option(False, "--mayhem", help="Enable mayhem mode (SOL coins only)"),
+    slippage: int = typer.Option(
+        15, "--slippage", help="Slippage tolerance percent for the opening buy (default: 15)"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
 ):
     """Launch a new token on pump.fun (create_v2 + extend_account)."""
     state = ctx.obj
     if not state or not state.rpc:
         error("RPC endpoint not configured.", hint="Run: pumpfun config set rpc <url>")
+    if slippage < 0 or slippage > 100:
+        error("Slippage must be between 0 and 100.", hint=f"Got: {slippage}")
+    if creator_fee_bps is not None and creator_fee_bps < 0:
+        error("Creator fee cannot be negative.", hint=f"Got: {creator_fee_bps}")
 
     from pathlib import Path
 
@@ -48,9 +72,13 @@ def launch(
                 ticker,
                 desc,
                 image,
-                buy,
-                mayhem,
-                cashback,
+                initial_buy=buy,
+                is_mayhem=mayhem,
+                quote_mint_str=quote_mint,
+                creator_fee_bps=creator_fee_bps,
+                is_holder_reward=holder_reward,
+                slippage=slippage,
+                confirm=confirm,
                 **overrides,
             )
         )
@@ -63,9 +91,12 @@ def launch(
         typer.echo(f"  Name:     {result['name']}")
         typer.echo(f"  Ticker:   {result['ticker']}")
         typer.echo(f"  Mint:     {result['mint']}")
+        typer.echo(f"  Quote:    {result['quote_symbol']}")
         typer.echo(f"  TX:       {result['explorer']}")
         typer.echo(f"  Pump.fun: {result['pump_url']}")
-        if result.get("is_cashback"):
-            typer.echo("  Cashback: enabled")
-        if result.get("initial_buy_sol"):
-            typer.echo(f"  Buy:      {result['initial_buy_sol']} SOL")
+        if result.get("is_holder_reward"):
+            typer.echo("  Holder rewards: enabled")
+        if result.get("creator_fee_bps"):
+            typer.echo(f"  Creator fee: {result['creator_fee_bps']} bps")
+        if result.get("initial_buy"):
+            typer.echo(f"  Buy:      {result['initial_buy']} {result['quote_symbol']}")

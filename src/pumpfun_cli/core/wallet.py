@@ -228,15 +228,14 @@ async def transfer_token(
 ) -> dict:
     """Transfer SPL tokens to another wallet, creating recipient ATA if needed."""
     from spl.token.instructions import (
-        TransferCheckedParams,
         create_idempotent_associated_token_account,
         get_associated_token_address,
         transfer_checked,
     )
+    from spl.token.models import TransferCheckedParams
 
     from pumpfun_cli.protocol.client import RpcClient
-    from pumpfun_cli.protocol.contracts import TOKEN_DECIMALS
-    from pumpfun_cli.protocol.pumpswap import get_token_program_id
+    from pumpfun_cli.protocol.quote import get_mint_info
 
     keypair = decrypt_keypair(Path(keystore_path), password)
     recipient = parse_pubkey(recipient_str, "recipient address")
@@ -247,14 +246,14 @@ async def transfer_token(
         return invalid_pubkey_error(mint_str, "mint address")
     client = RpcClient(rpc_url)
     try:
-        token_program = await get_token_program_id(client, mint)
+        token_program, decimals = await get_mint_info(client, mint)
         sender_ata = get_associated_token_address(keypair.pubkey(), mint, token_program)
         recipient_ata = get_associated_token_address(recipient, mint, token_program)
 
         if amount_str.lower() == "all":
             raw_amount = await client.get_token_account_balance(sender_ata)
         else:
-            raw_amount = int(float(amount_str) * (10**TOKEN_DECIMALS))
+            raw_amount = int(float(amount_str) * (10**decimals))
 
         if raw_amount <= 0:
             return {"error": "no_tokens", "message": "No tokens to transfer."}
@@ -274,7 +273,7 @@ async def transfer_token(
                     dest=recipient_ata,
                     owner=keypair.pubkey(),
                     amount=raw_amount,
-                    decimals=TOKEN_DECIMALS,
+                    decimals=decimals,
                 )
             ),
         ]
@@ -291,7 +290,7 @@ async def transfer_token(
             "from": str(keypair.pubkey()),
             "to": recipient_str,
             "mint": mint_str,
-            "amount": raw_amount / (10**TOKEN_DECIMALS),
+            "amount": raw_amount / (10**decimals),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
