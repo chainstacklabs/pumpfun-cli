@@ -103,7 +103,7 @@ Transaction inspection (requires RPC):
   pumpfun tx-status <signature>              Confirmation status, slot, fee, errors
 
 Token launch (requires RPC + wallet):
-  pumpfun launch --name X --ticker Y --uri U [--buy N]
+  pumpfun launch --name X --ticker Y [--uri U | --desc D --image P] [--buy N]
                  [--quote-mint M] [--creator-fee-bps N] [--holder-reward]
                  [--mayhem] [--slippage N] [--confirm]
 

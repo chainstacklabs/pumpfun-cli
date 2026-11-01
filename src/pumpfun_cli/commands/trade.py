@@ -84,6 +84,8 @@ def buy(
 ):
     """Buy tokens, spending an exact amount of the coin's quote asset."""
     _validate_mint(mint)
+    if amount <= 0:
+        error("Amount must be greater than 0.", hint=f"Got: {amount}", exit_code=2)
     _validate_slippage(slippage)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)

@@ -10,6 +10,7 @@ from pathlib import Path
 from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
+from pumpfun_cli.core.amounts import to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
@@ -148,7 +149,7 @@ async def buy_token(
         base_program = await get_token_program_id(client, mint)
         user = keypair.pubkey()
 
-        amount_raw = int(amount * 10**quote_decimals)
+        amount_raw = to_raw(amount, quote_decimals)
         tokens_out = calculate_buy_tokens_out(state, amount_raw)
         # The program rejects a zero floor (6020), so 100% slippage still asks for one unit.
         min_tokens_out = max(1, int(tokens_out * (100 - slippage) / 100))
@@ -290,7 +291,7 @@ async def sell_token(
         if amount_str.lower() == "all":
             token_amount = await client.get_token_account_balance(user_ata)
         else:
-            token_amount = int(float(amount_str) * 10**TOKEN_DECIMALS)
+            token_amount = to_raw(amount_str, TOKEN_DECIMALS)
             actual_balance = await client.get_token_account_balance(user_ata)
             if actual_balance < token_amount:
                 return {

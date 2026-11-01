@@ -156,3 +156,35 @@ async def test_get_transaction_not_found(respx_mock):
         assert await client.get_transaction(_SIG) is None
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_transaction_http_error_hides_the_url(respx_mock):
+    import httpx
+
+    url = "https://rpc.test/secret-api-key"
+    respx_mock.post(url).mock(return_value=httpx.Response(429))
+    client = RpcClient(url)
+    try:
+        with pytest.raises(RuntimeError) as info:
+            await client.get_transaction(_SIG)
+    finally:
+        await client.close()
+    assert "429" in str(info.value)
+    assert "secret-api-key" not in str(info.value)
+    assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_failed_confirmation_reports_the_signature():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from solders.signature import Signature
+
+    sig = Signature.default()
+    client = RpcClient("https://rpc.test")
+    client.rpc = MagicMock()
+    client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=sig))
+    client.rpc.confirm_transaction = AsyncMock(side_effect=TimeoutError())
+    with pytest.raises(RuntimeError, match=str(sig)):
+        await client._send_and_confirm(MagicMock(), confirm=True)

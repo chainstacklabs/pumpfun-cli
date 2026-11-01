@@ -200,3 +200,20 @@ def test_launch_rejects_negative_fee(wallet):
         ],
     )
     assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("amount", ["0", "-1"])
+def test_buy_rejects_non_positive_amount(wallet, amount):
+    with patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as buy:
+        result = runner.invoke(app, ["--rpc", "http://rpc", "buy", MINT, "--", amount])
+    assert result.exit_code == 2
+    buy.assert_not_called()
+
+
+def test_launch_rejects_negative_buy(wallet):
+    with patch("pumpfun_cli.commands.launch.launch_token", new_callable=AsyncMock) as launch:
+        result = runner.invoke(
+            app, ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", "--buy", "-1"]
+        )
+    assert result.exit_code != 0
+    launch.assert_not_called()

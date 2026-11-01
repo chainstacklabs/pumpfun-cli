@@ -51,6 +51,8 @@ def launch(
         error("Slippage must be between 0 and 100.", hint=f"Got: {slippage}")
     if creator_fee_bps is not None and creator_fee_bps < 0:
         error("Creator fee cannot be negative.", hint=f"Got: {creator_fee_bps}")
+    if buy is not None and buy < 0:
+        error("Buy amount cannot be negative.", hint=f"Got: {buy}")
 
     from pathlib import Path
 

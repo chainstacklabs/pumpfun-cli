@@ -17,7 +17,7 @@ async def test_get_token_info(surfpool_rpc, active_mint):
     assert 0 <= result["bonding_progress"] <= 100
     assert isinstance(result["graduated"], bool)
     assert result["real_quote_reserves"] >= 0
-    assert result["virtual_sol_reserves"] > 0
+    assert result["virtual_quote_reserves"] > 0
     assert result["virtual_token_reserves"] > 0
 
 

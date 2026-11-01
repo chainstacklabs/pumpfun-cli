@@ -61,7 +61,7 @@ async def test_buy_then_transfer_token(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=active_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         confirm=True,
     )

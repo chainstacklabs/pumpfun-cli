@@ -174,3 +174,30 @@ def test_upload_identifies_itself(respx_mock):
     )
     assert asyncio.run(upload_metadata("N", "T", "d")) == "https://ipfs.io/ipfs/x"
     assert route.calls.last.request.headers["user-agent"].startswith("pumpfun-cli")
+
+
+def test_opening_buy_follows_the_curve():
+    global_state = decode_global(build_global_data())
+    small = opening_buy_tokens(global_state, 1_000_000, 30_000_000_000, None)
+    big = opening_buy_tokens(global_state, 5_000_000_000, 30_000_000_000, None)
+    reaching = 5_000_000_000 * (10_000 - 125) // 10_000
+    linear_big = reaching * 1_073_000_000_000_000 // 30_000_000_000
+    # Constant product: a 5 SOL buy into 30 SOL receives about 14% less than linear.
+    assert big < linear_big * 0.87
+    assert small > 0
+
+
+async def test_upload_transport_error_points_at_uri(tmp_keystore):
+    import httpx
+
+    client = _chain()
+    with (
+        patch("pumpfun_cli.core.launch.RpcClient", return_value=client),
+        patch(
+            "pumpfun_cli.core.launch.upload_metadata",
+            AsyncMock(side_effect=httpx.ConnectTimeout("timed out")),
+        ),
+    ):
+        result = await launch_token("http://rpc", tmp_keystore, "testpass", "N", "T", "d")
+    assert result["error"] == "ipfs_failed"
+    assert "--uri" in result["message"]

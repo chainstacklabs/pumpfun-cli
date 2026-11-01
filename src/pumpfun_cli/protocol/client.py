@@ -172,8 +172,16 @@ class RpcClient:
         resp = await self.rpc.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
         signature = str(resp.value)
         if confirm:
-            await self.rpc.confirm_transaction(resp.value, commitment="confirmed", sleep_seconds=1)
-            status = await self.get_transaction(signature)
+            try:
+                await self.rpc.confirm_transaction(
+                    resp.value, commitment="confirmed", sleep_seconds=1
+                )
+                status = await self.get_transaction(signature)
+            except Exception as exc:  # noqa: BLE001 - the send already happened
+                raise RuntimeError(
+                    f"Sent {signature} but could not confirm it ({type(exc).__name__}). "
+                    f"Check it with: pumpfun tx-status {signature}"
+                ) from None
             if status and status["err"]:
                 raise TransactionFailedError(status["err"])
         return signature
@@ -218,10 +226,15 @@ class RpcClient:
                 },
             ],
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.post(self.rpc_url, json=payload)
-            resp.raise_for_status()
-            body = resp.json()
+        # Errors are rebuilt without the request: RPC URLs usually carry an API key.
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as http:
+                resp = await http.post(self.rpc_url, json=payload)
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"getTransaction failed: {type(exc).__name__}") from None
+        if resp.is_error:
+            raise RuntimeError(f"getTransaction failed: HTTP {resp.status_code}")
+        body = resp.json()
         if body.get("error"):
             raise RuntimeError(f"getTransaction failed: {body['error'].get('message')}")
         result = body.get("result")

@@ -7,6 +7,7 @@ import httpx
 from solders.keypair import Keypair
 from spl.token.instructions import create_idempotent_associated_token_account
 
+from pumpfun_cli.core.amounts import to_raw
 from pumpfun_cli.core.validate import parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import derive_bonding_curve, find_ata, find_holder_rewards
@@ -71,8 +72,7 @@ def opening_buy_tokens(
 ) -> int:
     """Tokens an opening buy of `amount_raw` quote units receives, after fees.
 
-    Priced against the reserves the curve opens with. At opening-buy sizes the
-    curvature is below the slippage margin, so the estimate is linear.
+    Priced on the constant-product curve the coin opens with.
     """
     creator_rate = (
         global_state.get("creator_fee_basis_points", 0)
@@ -81,7 +81,11 @@ def opening_buy_tokens(
     )
     fee_bps = global_state.get("fee_basis_points", 0) + creator_rate
     reaching_curve = amount_raw * (_BPS - fee_bps) // _BPS
-    return reaching_curve * global_state["initial_virtual_token_reserves"] // opening_reserves
+    return (
+        reaching_curve
+        * global_state["initial_virtual_token_reserves"]
+        // (opening_reserves + reaching_curve)
+    )
 
 
 async def launch_token(
@@ -144,7 +148,7 @@ async def launch_token(
         quote_program, quote_decimals = await get_mint_info(client, quote_mint)
         symbol = quote_symbol(quote_mint)
 
-        amount_raw = int((initial_buy or 0) * 10**quote_decimals)
+        amount_raw = to_raw(initial_buy or 0, quote_decimals)
         if amount_raw > 0 and not is_sol(quote_mint):
             held = await client.get_token_account_balance(
                 find_ata(user, quote_mint, quote_program)
@@ -161,7 +165,7 @@ async def launch_token(
         if not uri:
             try:
                 uri = await upload_metadata(name, ticker, description, image_path)
-            except RuntimeError as exc:
+            except (RuntimeError, httpx.HTTPError) as exc:
                 return {
                     "error": "ipfs_failed",
                     "message": f"{exc}. Host the metadata JSON yourself and pass --uri.",

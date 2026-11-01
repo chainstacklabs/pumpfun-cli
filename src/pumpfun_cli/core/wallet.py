@@ -234,6 +234,7 @@ async def transfer_token(
     )
     from spl.token.models import TransferCheckedParams
 
+    from pumpfun_cli.core.amounts import to_raw
     from pumpfun_cli.protocol.client import RpcClient
     from pumpfun_cli.protocol.quote import get_mint_info
 
@@ -253,7 +254,7 @@ async def transfer_token(
         if amount_str.lower() == "all":
             raw_amount = await client.get_token_account_balance(sender_ata)
         else:
-            raw_amount = int(float(amount_str) * (10**decimals))
+            raw_amount = to_raw(amount_str, decimals)
 
         if raw_amount <= 0:
             return {"error": "no_tokens", "message": "No tokens to transfer."}

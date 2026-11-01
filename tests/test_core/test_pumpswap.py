@@ -247,3 +247,15 @@ async def test_info_without_pool():
     with _patched(client):
         info = await get_pumpswap_info("http://rpc", MINT_STR)
     assert info["error"] == "pumpswap_error"
+
+
+async def test_sol_buy_wraps_ten_percent_headroom_exactly(tmp_keystore):
+    client, _ = _graduated_chain()
+    with _patched(client):
+        await buy_pumpswap("http://rpc", tmp_keystore, "testpass", MINT_STR, 0.29)
+    from solders.system_program import ID as SYSTEM_PROGRAM_ID
+    from solders.system_program import decode_create_account_with_seed
+
+    create = next(i for i in client.sent[0]["instructions"] if i.program_id == SYSTEM_PROGRAM_ID)
+    lamports = decode_create_account_with_seed(create)["lamports"]
+    assert lamports - 2_039_280 == 319_000_000  # 0.29 SOL + 10%, rent on top

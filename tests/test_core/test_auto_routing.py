@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from pumpfun_cli.core.pumpswap import buy_pumpswap, sell_pumpswap
 from pumpfun_cli.core.trade import buy_token, sell_token
-from pumpfun_cli.protocol.address import find_ata
+from pumpfun_cli.protocol.address import derive_bonding_curve, find_ata
 from pumpfun_cli.protocol.contracts import TOKEN_2022_PROGRAM
 from tests.test_core.helpers import COIN, add_pool, build_curve_data, chain_with_coin
 
@@ -52,9 +52,7 @@ async def test_graduated_sell_hands_off(tmp_keystore):
 
 async def test_missing_curve_is_not_graduated(tmp_keystore):
     client = chain_with_coin()
-    del client.accounts[
-        next(k for k in client.accounts if k != COIN and len(client.accounts[k].data) == 125)
-    ]
+    del client.accounts[derive_bonding_curve(COIN)]
     a, b = _both(client)
     with a, b:
         result = await buy_token("http://rpc", tmp_keystore, "testpass", MINT_STR, 0.01)

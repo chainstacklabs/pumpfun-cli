@@ -8,6 +8,7 @@ from pathlib import Path
 
 from solders.pubkey import Pubkey
 
+from pumpfun_cli.core.amounts import to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
@@ -44,9 +45,9 @@ from pumpfun_cli.protocol.pumpswap import (
 from pumpfun_cli.protocol.quote import is_sol, quote_symbol
 
 _BPS = 10_000
-# Headroom wrapped on top of a SOL buy. The throwaway WSOL account is closed in
-# the same transaction, so whatever is not spent comes straight back.
-_WSOL_FUNDING_BUFFER = 1.1
+# Headroom wrapped on top of a SOL buy, in percent. The throwaway WSOL account
+# is closed in the same transaction, so whatever is not spent comes straight back.
+_WSOL_FUNDING_BUFFER_PCT = 10
 
 
 def _handle_tx_error(exc: TransactionFailedError, slippage_codes: set[int]) -> dict:
@@ -119,7 +120,7 @@ async def buy_pumpswap(
         quote_decimals = tokens["quote_decimals"]
         user = keypair.pubkey()
 
-        amount_raw = int(amount * 10**quote_decimals)
+        amount_raw = to_raw(amount, quote_decimals)
         effective_in = amount_raw * (_BPS - _total_fee_bps(config)) // _BPS
         estimated_tokens = base_balance * effective_in // (quote_balance + effective_in)
         min_base_amount_out = max(1, estimated_tokens * (100 - slippage) // 100)
@@ -128,7 +129,9 @@ async def buy_pumpswap(
         eff_compute_units = (
             compute_units if compute_units is not None else PUMPSWAP_BUY_COMPUTE_UNITS
         )
-        wsol_funding = int(amount_raw * _WSOL_FUNDING_BUFFER) if is_sol(quote_mint) else 0
+        wsol_funding = (
+            amount_raw * (100 + _WSOL_FUNDING_BUFFER_PCT) // 100 if is_sol(quote_mint) else 0
+        )
         fee_lamports = eff_priority_fee * eff_compute_units // 1_000_000
         required_lamports = (
             wsol_funding + fee_lamports + 2 * ATA_RENT_LAMPORTS + SOL_RENT_EXEMPT_MIN
@@ -263,7 +266,7 @@ async def sell_pumpswap(
         if amount_str.lower() == "all":
             token_amount = await client.get_token_account_balance(user_token_ata)
         else:
-            token_amount = int(float(amount_str) * 10**base_decimals)
+            token_amount = to_raw(amount_str, base_decimals)
             actual_balance = await client.get_token_account_balance(user_token_ata)
             if actual_balance < token_amount:
                 return {
