@@ -217,3 +217,52 @@ def test_launch_rejects_negative_buy(wallet):
         )
     assert result.exit_code != 0
     launch.assert_not_called()
+
+
+def test_tokens_table_names_quote_and_survives_missing_chain_data():
+    rows = [
+        {
+            "name": "A",
+            "symbol": "A",
+            "mint": "m1",
+            "quote_symbol": "SOL",
+            "price": 3.2e-7,
+            "bonding_progress": 96.2,
+            "usd_market_cap": 31_800,
+        },
+        {
+            "name": "B",
+            "symbol": "B",
+            "mint": "m2",
+            "quote_symbol": "6FhVPctYg363pQbs4iSv",
+            "price": 0.0093,
+            "bonding_progress": 96.3,
+            "usd_market_cap": 1_200_000,
+        },
+        {"name": "C", "symbol": "C", "mint": "m3", "quote_symbol": "SOL", "usd_market_cap": None},
+    ]
+    with (
+        _human("tokens"),
+        patch(
+            "pumpfun_cli.commands.tokens.get_graduating_tokens", new_callable=AsyncMock
+        ) as fetch,
+        patch("pumpfun_cli.commands.tokens.render_table") as table,
+    ):
+        fetch.return_value = rows
+        result = runner.invoke(app, ["tokens", "graduating"])
+    assert result.exit_code == 0, result.output
+    shown = table.call_args.args[0]
+    assert [t["_price"] for t in shown] == ["3.2e-07 SOL", "0.0093 6FhV…", "—"]
+    assert [t["_mcap"] for t in shown] == ["$31.8K", "$1.2M", ""]
+
+
+def test_tokens_api_failure_is_a_clean_error():
+    from pumpfun_cli.core.tokens import TokenApiError
+
+    with patch(
+        "pumpfun_cli.commands.tokens.get_new_tokens",
+        new=AsyncMock(side_effect=TokenApiError("pump.fun API returned HTTP 404 for /x")),
+    ):
+        result = runner.invoke(app, ["tokens", "new"])
+    assert result.exit_code == 1
+    assert "404" in result.output

@@ -81,12 +81,12 @@ spends that asset, so the wallet has to hold it.
 ## Commands
 
 ```
-Token discovery (zero config):
-  pumpfun tokens trending [--limit N]     Top runners + recommended
+Token discovery (zero config; price and progress added when an RPC is set):
+  pumpfun tokens trending [--limit N]     pump.fun's movers board
   pumpfun tokens new [--limit N]          Recently launched
-  pumpfun tokens graduating [--limit N]   Near bonding curve completion
-  pumpfun tokens recommended [--limit N]  Recommended by pump.fun
-  pumpfun tokens search <query>           Search by keyword
+  pumpfun tokens graduating [--limit N]   Closest to bonding curve completion
+  pumpfun tokens recommended [--limit N]  Recommended by pump.fun (at most 10)
+  pumpfun tokens search <query>           Search by name or ticker
 
 Token info (requires RPC):
   pumpfun info <mint>                     Price, bonding progress, reserves
@@ -134,11 +134,17 @@ Global options:
 
 | Command | Endpoint | Protocol |
 |---------|----------|----------|
-| `tokens trending` | `frontend-api-v3.pump.fun/coins/top-runners` + `/coins/recommended` | HTTPS |
-| `tokens new` | `frontend-api-v3.pump.fun/coins/recommended` | HTTPS |
-| `tokens graduating` | `frontend-api-v3.pump.fun/coins/recommended` | HTTPS |
-| `tokens recommended` | `frontend-api-v3.pump.fun/coins/recommended` | HTTPS |
-| `tokens search` | `frontend-api-v3.pump.fun/coins/recommended` (client-side filter) | HTTPS |
+| `tokens trending` | `frontend-api-v3.pump.fun/coins/boards/movers` | HTTPS |
+| `tokens new` | `frontend-api-v3.pump.fun/coins/boards/new` | HTTPS |
+| `tokens graduating` | `frontend-api-v3.pump.fun/coins/boards/graduating` | HTTPS |
+| `tokens recommended` | `frontend-api-v3.pump.fun/coins/recommendations` | HTTPS |
+| `tokens search` | `frontend-api-v3.pump.fun/coins/search-unrestricted` | HTTPS |
+| `tokens *` with an RPC set | + Solana RPC (`getMultipleAccounts` for the bonding curves) | JSON-RPC |
+
+The `tokens` listings use pump.fun's frontend API, which is unofficial and
+changes without notice. They are narrowed to pump.fun coins on Solana; the API
+no longer returns curve reserves, so price and bonding progress come from the
+chain and need an RPC endpoint.
 | `info` | Solana RPC (`getAccountInfo` for bonding curve PDA) | JSON-RPC |
 | `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
 | `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |

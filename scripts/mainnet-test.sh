@@ -184,11 +184,12 @@ echo "  Done. ($PASS pass)"
 # --- Group 3: Token Discovery ---
 
 echo "=== Group 3: Token Discovery ==="
-run_json_array "Discovery" "tokens trending"    "uv run pumpfun tokens trending --limit 3"
+run_json_array "Discovery" "tokens trending"    "uv run pumpfun tokens trending --limit 20"
 TRENDING=$(last_output)
 run_json_array "Discovery" "tokens new"         "uv run pumpfun tokens new --limit 10"
 NEW_TOKENS=$(last_output)
-run_json_array "Discovery" "tokens graduating"  "uv run pumpfun tokens graduating --limit 3"
+run_json_array "Discovery" "tokens graduating"  "uv run pumpfun tokens graduating --limit 10"
+GRADUATING=$(last_output)
 run_json_array "Discovery" "tokens recommended" "uv run pumpfun tokens recommended --limit 3"
 
 # Search — known to sometimes return empty
@@ -207,11 +208,12 @@ fi
 
 # --- Discover mints for later groups ---
 
-ACTIVE_MINT=$(echo "$NEW_TOKENS" | python3 -c "
+# A SOL-priced coin still on its curve; the graduating board has the deepest ones.
+ACTIVE_MINT=$(echo "$GRADUATING" | python3 -c "
 import json, sys
 tokens = json.load(sys.stdin)
 for t in tokens:
-    if not t.get('complete', True) and t.get('real_token_reserves', 0) > 0 and t.get('real_sol_reserves', 0) > 1_000_000_000:
+    if not t.get('complete', True) and t.get('quote_symbol') == 'SOL':
         print(t['mint'])
         break
 else:
@@ -221,14 +223,11 @@ else:
 GRADUATED_MINT=$(echo "$TRENDING" | python3 -c "
 import json, sys
 tokens = json.load(sys.stdin)
-# Prefer graduated tokens with higher SOL reserves — pools with extreme
-# base/quote ratios can trigger on-chain overflow at buy.rs:400.
+# A graduated SOL-priced coin; the largest one has the deepest PumpSwap pool.
 best = None
 for t in tokens:
-    if t.get('complete') and t.get('pump_swap_pool'):
-        if best is None:
-            best = t
-        elif t.get('market_cap', 0) > best.get('market_cap', 0):
+    if t.get('complete') and t.get('quote_symbol') == 'SOL':
+        if best is None or (t.get('usd_market_cap') or 0) > (best.get('usd_market_cap') or 0):
             best = t
 if best:
     print(best['mint'])

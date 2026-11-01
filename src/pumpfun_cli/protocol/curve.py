@@ -1,8 +1,9 @@
 """BondingCurve decoding and curve math.
 
 A curve is 125 bytes as create_v2 allocates it, 151 for older coins, and
-extend_account can grow it further. Every field read here sits at a fixed
-offset regardless of length, so any length is decoded the same way.
+extend_account can grow it further. The oldest coins still carry the original
+49-byte curve, which ends after `complete`. Every field sits at a fixed offset,
+so any length is decoded the same way and a field past the end reads as absent.
 """
 
 import struct
@@ -28,16 +29,17 @@ def parse_bonding_curve(data: bytes) -> dict:
     """Decode a BondingCurve account.
 
     `quote_mint` comes back normalized (wrapped SOL for a SOL-paired coin).
-    `creator_fee_bps` and `is_holder_reward` are None on a curve too short to
-    carry them, i.e. one created before those fields existed.
+    A field the curve is too short to carry predates that feature: `creator`,
+    `creator_fee_bps` and `is_holder_reward` read as None, the mayhem and
+    cashback flags as False, and the quote asset as SOL.
 
     Raises:
-        ValueError: If the discriminator is wrong or the data ends before a
-            field every trade needs
+        ValueError: If the discriminator is wrong or the data ends before the
+            reserves
     """
     if data[:8] != BONDING_CURVE_DISCRIMINATOR:
         raise ValueError("Account is not a pump.fun bonding curve")
-    if len(data) <= _CASHBACK_OFFSET:
+    if len(data) < _CREATOR_OFFSET:
         raise ValueError(f"Bonding curve data is only {len(data)} bytes")
     (
         virtual_token,
@@ -68,9 +70,13 @@ def parse_bonding_curve(data: bytes) -> dict:
         "real_quote_reserves": real_quote,
         "token_total_supply": supply,
         "complete": bool(complete),
-        "creator": Pubkey.from_bytes(data[_CREATOR_OFFSET : _CREATOR_OFFSET + 32]),
-        "is_mayhem_mode": bool(data[_MAYHEM_OFFSET]),
-        "is_cashback_coin": bool(data[_CASHBACK_OFFSET]),
+        "creator": (
+            Pubkey.from_bytes(data[_CREATOR_OFFSET : _CREATOR_OFFSET + 32])
+            if len(data) >= _CREATOR_OFFSET + 32
+            else None
+        ),
+        "is_mayhem_mode": len(data) > _MAYHEM_OFFSET and bool(data[_MAYHEM_OFFSET]),
+        "is_cashback_coin": len(data) > _CASHBACK_OFFSET and bool(data[_CASHBACK_OFFSET]),
         "quote_mint": normalize_quote_mint(raw_quote),
         "is_sol_paired": is_sol(raw_quote),
         "creator_fee_bps": creator_fee_bps,
