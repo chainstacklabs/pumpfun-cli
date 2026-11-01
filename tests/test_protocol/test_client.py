@@ -144,8 +144,8 @@ async def test_get_transaction_reads_v1_result(respx_mock):
         "err": None,
         "fee": 5000,
         "block_time": 99,
-        "pre_token_balances": [],
-        "post_token_balances": [],
+        "pre_token_balances": None,
+        "post_token_balances": None,
     }
     body = respx_mock.calls.last.request.content
     assert b'"maxSupportedTransactionVersion":1' in body.replace(b" ", b"")
@@ -195,3 +195,16 @@ async def test_failed_confirmation_reports_the_signature():
     client.rpc.confirm_transaction = AsyncMock(side_effect=TimeoutError())
     with pytest.raises(RuntimeError, match=str(sig)):
         await client._send_and_confirm(MagicMock(), confirm=True)
+
+
+@pytest.mark.asyncio
+async def test_get_transaction_non_json_is_a_runtime_error(respx_mock):
+    import httpx
+
+    respx_mock.post("https://rpc.test").mock(return_value=httpx.Response(200, text="<html>"))
+    client = RpcClient("https://rpc.test")
+    try:
+        with pytest.raises(RuntimeError, match="not JSON"):
+            await client.get_transaction(_SIG)
+    finally:
+        await client.close()

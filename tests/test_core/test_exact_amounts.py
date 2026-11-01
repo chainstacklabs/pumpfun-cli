@@ -6,7 +6,7 @@ from unittest.mock import patch
 from solders.pubkey import Pubkey
 from solders.system_program import decode_transfer
 
-from pumpfun_cli.core.amounts import amount_fields
+from pumpfun_cli.core.amounts import amount_fields, token_delta
 from pumpfun_cli.core.pumpswap import buy_pumpswap, sell_pumpswap
 from pumpfun_cli.core.trade import buy_token, collect_creator_fees, sell_token
 from pumpfun_cli.core.wallet import transfer_sol
@@ -119,3 +119,20 @@ async def test_sol_transfer_sends_the_exact_amount(tmp_keystore):
     assert int(0.00013 * 10**9) == 129_999  # what the float conversion sent
     assert sent["lamports"] == 130_000
     assert result["sol_amount_raw"] == 130_000
+
+
+def test_token_delta_counts_a_newly_created_account():
+    owner = Pubkey.new_unique()
+    tx = {"pre_token_balances": [], "post_token_balances": _balances(owner, LOSSY_RAW)}
+    assert token_delta(tx, owner, COIN) == LOSSY_RAW
+
+
+def test_token_delta_refuses_to_guess():
+    owner = Pubkey.new_unique()
+    unrecorded = {"pre_token_balances": None, "post_token_balances": _balances(owner, 1)}
+    ownerless = {
+        "pre_token_balances": [],
+        "post_token_balances": [{"mint": MINT_STR, "uiTokenAmount": {"amount": "7"}}],
+    }
+    assert token_delta(unrecorded, owner, COIN) is None
+    assert token_delta(ownerless, owner, COIN) is None
