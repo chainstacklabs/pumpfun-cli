@@ -23,20 +23,24 @@ def info(
     state = ctx.obj
     if not state or not state.rpc:
         error("RPC endpoint not configured.", hint="Run: pumpfun config set rpc <url>")
-    result = asyncio.run(get_token_info(state.rpc, mint, rpc_timeout=rpc_timeout))
+    try:
+        result = asyncio.run(get_token_info(state.rpc, mint, rpc_timeout=rpc_timeout))
+    except (ValueError, RuntimeError) as exc:
+        error(str(exc))
     if result.get("error"):
         error(result["message"])
     if not render(result, state.json_mode):
         typer.echo(f"Mint:             {result['mint']}")
-        typer.echo(f"Price:            {result['price_sol']:.10f} SOL")
+        symbol = result["quote_symbol"]
+        typer.echo(f"Price:            {result['price']:.10f} {symbol}")
         typer.echo(f"Bonding progress: {result['bonding_progress']}%")
         typer.echo(f"Graduated:        {result['graduated']}")
         if result["graduated"] and result.get("pool_address"):
             typer.echo(f"Pool:             {result['pool_address']}")
             typer.echo(f"Base reserves:    {result['base_reserves']:.2f}")
-            typer.echo(f"Quote reserves:   {result['quote_reserves_sol']:.4f} SOL")
+            typer.echo(f"Quote reserves:   {result['quote_reserves']:.4f} {symbol}")
         else:
-            typer.echo(f"SOL reserves:     {result['real_sol_reserves']:.2f} SOL")
+            typer.echo(f"Quote reserves:   {result['real_quote_reserves']:.4f} {symbol}")
         if result.get("pumpswap_warning"):
             typer.echo(f"Warning:          {result['pumpswap_warning']}")
         typer.echo(f"Creator:          {result['creator']}")
@@ -44,3 +48,7 @@ def info(
             typer.echo("Mayhem mode:      Yes")
         if result["is_cashback_coin"]:
             typer.echo("Cashback:         Yes")
+        if result.get("is_holder_reward"):
+            typer.echo("Holder rewards:   Yes")
+        if result.get("creator_fee_bps"):
+            typer.echo(f"Creator fee:      {result['creator_fee_bps']} bps")

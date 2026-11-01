@@ -366,12 +366,7 @@ for t in tokens:
     # --- Group 6b: Token Launch ---
 
     echo "=== Group 6b: Token Launch ==="
-    # Generate a minimal test image
-    python3 -c "from PIL import Image; Image.new('RGB',(100,100),'blue').save('/tmp/e2e_test_token.png')" 2>/dev/null
-    LAUNCH_IMG=""
-    [[ -f /tmp/e2e_test_token.png ]] && LAUNCH_IMG="--image /tmp/e2e_test_token.png"
-
-    LAUNCH_OUT=$(uv run pumpfun --json launch --name "E2E Test $(date +%s)" --ticker "E2ET" --desc "Automated e2e test token" $LAUNCH_IMG 2>&1)
+    LAUNCH_OUT=$(uv run pumpfun --json launch --name "E2E Test $(date +%s)" --ticker "E2ET" --uri https://example.com/token-v2.json 2>&1)
     LAUNCH_EXIT=$?
     echo "$LAUNCH_OUT" > "$LAST_OUTPUT_FILE"
     if [[ $LAUNCH_EXIT -eq 0 ]]; then
@@ -391,7 +386,7 @@ for t in tokens:
     fi
 
     # Launch + buy
-    LAUNCH_BUY_OUT=$(uv run pumpfun --json launch --name "E2E Buy Test $(date +%s)" --ticker "E2EB" --desc "Automated e2e launch+buy" $LAUNCH_IMG --buy 0.001 2>&1)
+    LAUNCH_BUY_OUT=$(uv run pumpfun --json launch --name "E2E Buy Test $(date +%s)" --ticker "E2EB" --uri https://example.com/token-v2.json --buy 0.001 2>&1)
     LAUNCH_BUY_EXIT=$?
     echo "$LAUNCH_BUY_OUT" > "$LAST_OUTPUT_FILE"
     if [[ $LAUNCH_BUY_EXIT -eq 0 ]]; then

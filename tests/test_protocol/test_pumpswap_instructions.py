@@ -1,203 +1,126 @@
-"""Tests for PumpSwap instruction builders."""
+"""PumpSwap swap builders: the IDL prefix plus the accounts the program reads beyond it."""
 
+import pytest
 from solders.pubkey import Pubkey
-from spl.token.instructions import get_associated_token_address
 
+from pumpfun_cli.protocol.address import (
+    derive_amm_pool_v2,
+    derive_amm_user_volume_accumulator,
+    find_ata,
+)
 from pumpfun_cli.protocol.contracts import (
     PUMP_AMM_PROGRAM,
-    PUMPSWAP_BUY_DISCRIMINATOR,
-    PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR,
-    PUMPSWAP_SELL_DISCRIMINATOR,
-    STANDARD_PUMPSWAP_FEE_RECIPIENT,
+    TOKEN_2022_PROGRAM,
     TOKEN_PROGRAM,
     WSOL_MINT,
 )
 from pumpfun_cli.protocol.instructions import (
     build_pumpswap_buy_exact_quote_in_instructions,
-    build_pumpswap_buy_instructions,
     build_pumpswap_sell_instructions,
 )
+from tests.test_protocol.test_instructions import AMM_IDL, assert_matches_idl
 
-_USER = Pubkey.from_string("11111111111111111111111111111112")
-_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-_POOL = Pubkey.from_string("11111111111111111111111111111113")
-_FEE_RECIPIENT_ATA = get_associated_token_address(
-    STANDARD_PUMPSWAP_FEE_RECIPIENT,
-    WSOL_MINT,
-    TOKEN_PROGRAM,
+USER = Pubkey.new_unique()
+FEE = Pubkey.new_unique()
+BUYBACK = Pubkey.new_unique()
+TOKENS = {"base_token_program": TOKEN_2022_PROGRAM, "quote_token_program": TOKEN_PROGRAM}
+
+
+def _pool(*, canonical=True, cashback=False, quote=WSOL_MINT):
+    return {
+        "base_mint": Pubkey.new_unique(),
+        "quote_mint": quote,
+        "pool_base_token_account": Pubkey.new_unique(),
+        "pool_quote_token_account": Pubkey.new_unique(),
+        "coin_creator": Pubkey.new_unique() if canonical else Pubkey.default(),
+        "is_canonical": canonical,
+        "is_cashback_coin": cashback,
+        "is_mayhem_mode": False,
+    }
+
+
+def _swap(ixs):
+    return next(i for i in ixs if i.program_id == PUMP_AMM_PROGRAM)
+
+
+def _buy(pool, tokens=TOKENS, funding=1_000):
+    return build_pumpswap_buy_exact_quote_in_instructions(
+        user=USER,
+        pool_address=Pubkey.new_unique(),
+        pool=pool,
+        tokens=tokens,
+        fee_recipient=FEE,
+        buyback_recipient=BUYBACK,
+        spendable_quote_in=1_000,
+        min_base_amount_out=1,
+        wsol_funding=funding,
+    )
+
+
+def _sell(pool, tokens=TOKENS):
+    return build_pumpswap_sell_instructions(
+        user=USER,
+        pool_address=Pubkey.new_unique(),
+        pool=pool,
+        tokens=tokens,
+        fee_recipient=FEE,
+        buyback_recipient=BUYBACK,
+        token_amount=1,
+        min_quote_out=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "canonical,cashback,buy_count,sell_count",
+    [(True, False, 26, 24), (True, True, 27, 26), (False, False, 25, 23), (False, True, 26, 25)],
 )
+def test_swap_account_counts(canonical, cashback, buy_count, sell_count):
+    pool = _pool(canonical=canonical, cashback=cashback)
+    buy, sell = _swap(_buy(pool)), _swap(_sell(pool))
+    assert len(buy.accounts) == buy_count
+    assert len(sell.accounts) == sell_count
+    assert_matches_idl(AMM_IDL, "buy_exact_quote_in", buy, prefix=23)
+    assert_matches_idl(AMM_IDL, "sell", sell, prefix=21)
 
-_POOL_DATA = {
-    "base_mint": _MINT,
-    "quote_mint": WSOL_MINT,
-    "pool_base_token_account": Pubkey.from_string("11111111111111111111111111111114"),
-    "pool_quote_token_account": Pubkey.from_string("11111111111111111111111111111115"),
-    "coin_creator": _USER,
-}
+
+@pytest.mark.parametrize("canonical", [True, False])
+def test_buyback_pair_is_last_and_pool_v2_only_on_canonical(canonical):
+    pool = _pool(canonical=canonical)
+    for swap in (_swap(_buy(pool)), _swap(_sell(pool))):
+        keys = [m.pubkey for m in swap.accounts]
+        assert keys[-2] == BUYBACK
+        assert not swap.accounts[-2].is_writable
+        assert keys[-1] == find_ata(BUYBACK, WSOL_MINT, TOKEN_PROGRAM)
+        assert swap.accounts[-1].is_writable
+        assert (derive_amm_pool_v2(pool["base_mint"]) in keys) == canonical
 
 
-def test_pumpswap_buy_returns_five_instructions():
-    ixs = build_pumpswap_buy_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        amount_out=1_000_000,
-        max_sol_in=100_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
+def test_cashback_accounts_precede_pool_v2():
+    pool = _pool(cashback=True)
+    acc = derive_amm_user_volume_accumulator(USER)
+    acc_quote = find_ata(acc, WSOL_MINT, TOKEN_PROGRAM)
+    buy = [m.pubkey for m in _swap(_buy(pool)).accounts]
+    sell = [m.pubkey for m in _swap(_sell(pool)).accounts]
+    assert buy[23] == acc_quote and buy[24] == derive_amm_pool_v2(pool["base_mint"])
+    assert sell[21:23] == [acc_quote, acc]
+
+
+def test_sol_buy_wraps_through_a_closed_throwaway_account():
+    ixs = _buy(_pool(), funding=5_000)
+    swap = _swap(ixs)
+    user_quote = swap.accounts[6].pubkey
+    assert user_quote != find_ata(USER, WSOL_MINT, TOKEN_PROGRAM)
+    # create-with-seed, initialize, create base ATA, swap, close
     assert len(ixs) == 5
+    assert ixs[-1].program_id == TOKEN_PROGRAM
+    assert user_quote in [m.pubkey for m in ixs[-1].accounts]
 
 
-def test_pumpswap_buy_last_ix_has_24_accounts():
-    ixs = build_pumpswap_buy_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        amount_out=1_000_000,
-        max_sol_in=100_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
-    buy_ix = ixs[-1]
-    assert len(buy_ix.accounts) == 24
-    assert buy_ix.program_id == PUMP_AMM_PROGRAM
-    assert buy_ix.data[:8] == PUMPSWAP_BUY_DISCRIMINATOR
-
-
-def test_pumpswap_sell_returns_two_instructions():
-    ixs = build_pumpswap_sell_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        token_amount=1_000_000,
-        min_sol_out=0,
-    )
-    assert len(ixs) == 2
-
-
-def test_pumpswap_sell_last_ix_has_21_accounts():
-    ixs = build_pumpswap_sell_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        token_amount=1_000_000,
-        min_sol_out=0,
-    )
-    sell_ix = ixs[-1]
-    assert len(sell_ix.accounts) == 22
-    assert sell_ix.program_id == PUMP_AMM_PROGRAM
-    assert sell_ix.data[:8] == PUMPSWAP_SELL_DISCRIMINATOR
-
-
-def test_pumpswap_buy_first_account_is_pool():
-    ixs = build_pumpswap_buy_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        amount_out=1_000_000,
-        max_sol_in=100_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
-    buy_ix = ixs[-1]
-    assert buy_ix.accounts[0].pubkey == _POOL
-    assert buy_ix.accounts[0].is_writable is True
-
-
-def test_pumpswap_sell_first_account_is_pool():
-    ixs = build_pumpswap_sell_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        token_amount=1_000_000,
-        min_sol_out=0,
-    )
-    sell_ix = ixs[-1]
-    assert sell_ix.accounts[0].pubkey == _POOL
-    assert sell_ix.accounts[0].is_writable is True
-
-
-def test_pumpswap_buy_exact_quote_in_returns_five():
-    ixs = build_pumpswap_buy_exact_quote_in_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        spendable_quote_in=100_000_000,
-        min_base_amount_out=1_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
-    assert len(ixs) == 5
-
-
-def test_pumpswap_buy_exact_quote_in_discriminator():
-    ixs = build_pumpswap_buy_exact_quote_in_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        spendable_quote_in=100_000_000,
-        min_base_amount_out=1_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
-    buy_ix = ixs[-1]
-    assert buy_ix.data[:8] == PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR
-    assert len(buy_ix.accounts) == 24
-
-
-def test_pumpswap_buy_data_has_track_volume():
-    """PumpSwap buy instruction data should be 25 bytes: 8 disc + 8 + 8 + 1 OptionBool."""
-    ixs = build_pumpswap_buy_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        amount_out=1_000_000,
-        max_sol_in=100_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
-    buy_ix = ixs[-1]
-    data = bytes(buy_ix.data)
-    assert len(data) == 25  # 8 + 8 + 8 + 1
-    assert data[-1:] == bytes([1])
-
-
-def test_pumpswap_buy_exact_quote_in_data_has_track_volume():
-    """PumpSwap buy_exact_quote_in data should be 25 bytes with trailing OptionBool."""
-    ixs = build_pumpswap_buy_exact_quote_in_instructions(
-        user=_USER,
-        pool_address=_POOL,
-        pool=_POOL_DATA,
-        token_program_id=TOKEN_PROGRAM,
-        fee_recipient=STANDARD_PUMPSWAP_FEE_RECIPIENT,
-        fee_recipient_ata=_FEE_RECIPIENT_ATA,
-        spendable_quote_in=100_000_000,
-        min_base_amount_out=1_000_000,
-        sol_wrap_lamports=110_000_000,
-    )
-    buy_ix = ixs[-1]
-    data = bytes(buy_ix.data)
-    assert len(data) == 25
-    assert data[-1:] == bytes([1])
+def test_non_sol_pool_settles_through_the_wallet_ata():
+    quote = Pubkey.new_unique()
+    tokens = {"base_token_program": TOKEN_2022_PROGRAM, "quote_token_program": TOKEN_2022_PROGRAM}
+    pool = _pool(quote=quote)
+    swap = _swap(_sell(pool, tokens))
+    assert swap.accounts[6].pubkey == find_ata(USER, quote, TOKEN_2022_PROGRAM)
+    assert swap.accounts[12].pubkey == TOKEN_2022_PROGRAM
+    assert swap.accounts[-1].pubkey == find_ata(BUYBACK, quote, TOKEN_2022_PROGRAM)

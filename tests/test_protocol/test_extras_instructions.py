@@ -1,95 +1,82 @@
-"""Tests for claim-cashback, close-volume-acc, and migrate instruction builders."""
-
-from pathlib import Path
+"""Payout, cleanup and migration builders follow the quote asset they act on."""
 
 from solders.pubkey import Pubkey
 
+from pumpfun_cli.protocol.address import (
+    derive_amm_creator_vault,
+    derive_amm_lp_mint,
+    derive_amm_pool,
+    derive_creator_vault,
+    find_ata,
+    find_user_volume_accumulator,
+)
 from pumpfun_cli.protocol.contracts import (
-    COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR,
-    COLLECT_CREATOR_FEE_DISCRIMINATOR,
-    PUMP_AMM_PROGRAM,
-    PUMP_PROGRAM,
+    RENT,
+    TOKEN_2022_PROGRAM,
+    TOKEN_PROGRAM,
+    WSOL_MINT,
 )
-from pumpfun_cli.protocol.idl_parser import IDLParser
 from pumpfun_cli.protocol.instructions import (
-    build_claim_cashback_instruction,
-    build_close_volume_accumulator_instruction,
+    build_claim_cashback_v2_instruction,
     build_collect_coin_creator_fee_instruction,
-    build_collect_creator_fee_instruction,
-    build_migrate_instruction,
+    build_collect_creator_fee_v2_instruction,
+    build_migrate_v2_instruction,
 )
 
-IDL_PATH = Path(__file__).parent.parent.parent / "idl" / "pump_fun_idl.json"
-_USER = Pubkey.from_string("11111111111111111111111111111112")
-_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-_WA = Pubkey.from_string("11111111111111111111111111111113")
+USER = Pubkey.new_unique()
+MINT = Pubkey.new_unique()
+QUOTE = Pubkey.new_unique()
 
 
-def test_claim_cashback_has_5_accounts():
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_claim_cashback_instruction(idl=idl, user=_USER)
-    assert len(ix.accounts) == 5
-    assert ix.program_id == PUMP_PROGRAM
-    assert ix.accounts[0].pubkey == _USER
-    assert ix.accounts[0].is_signer is False
-    assert ix.accounts[0].is_writable is True
+def _keys(ix):
+    return [m.pubkey for m in ix.accounts]
 
 
-def test_close_volume_accumulator_has_4_accounts():
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_close_volume_accumulator_instruction(idl=idl, user=_USER)
-    assert len(ix.accounts) == 4
-    assert ix.program_id == PUMP_PROGRAM
-    assert ix.accounts[0].pubkey == _USER
-    assert ix.accounts[0].is_signer is True
+def test_claim_cashback_v2_uses_the_accumulators_quote_account():
+    keys = _keys(
+        build_claim_cashback_v2_instruction(
+            user=USER, quote_mint=QUOTE, quote_token_program=TOKEN_2022_PROGRAM
+        )
+    )
+    acc = find_user_volume_accumulator(USER)
+    assert keys[2:4] == [QUOTE, TOKEN_2022_PROGRAM]
+    assert keys[5] == find_ata(acc, QUOTE, TOKEN_2022_PROGRAM)
+    assert keys[6] == find_ata(USER, QUOTE, TOKEN_2022_PROGRAM)
 
 
-def test_migrate_has_24_accounts():
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_migrate_instruction(idl=idl, mint=_MINT, user=_USER, withdraw_authority=_WA)
-    assert len(ix.accounts) == 24
-    assert ix.program_id == PUMP_PROGRAM
+def test_collect_creator_fee_v2_per_quote_vault():
+    keys = _keys(
+        build_collect_creator_fee_v2_instruction(
+            creator=USER, quote_mint=QUOTE, quote_token_program=TOKEN_2022_PROGRAM
+        )
+    )
+    vault = derive_creator_vault(USER)
+    assert keys[1] == find_ata(USER, QUOTE, TOKEN_2022_PROGRAM)
+    assert keys[2] == vault
+    assert keys[3] == find_ata(vault, QUOTE, TOKEN_2022_PROGRAM)
 
 
-def test_migrate_user_is_signer():
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_migrate_instruction(idl=idl, mint=_MINT, user=_USER, withdraw_authority=_WA)
-    user_account = ix.accounts[5]
-    assert user_account.pubkey == _USER
-    assert user_account.is_signer is True
+def test_collect_coin_creator_fee_defaults_to_wsol():
+    keys = _keys(build_collect_coin_creator_fee_instruction(creator=USER))
+    authority = derive_amm_creator_vault(USER)
+    assert keys[0:2] == [WSOL_MINT, TOKEN_PROGRAM]
+    assert keys[4] == find_ata(authority, WSOL_MINT, TOKEN_PROGRAM)
+    assert keys[5] == find_ata(USER, WSOL_MINT, TOKEN_PROGRAM)
 
 
-def test_migrate_includes_amm_program():
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_migrate_instruction(idl=idl, mint=_MINT, user=_USER, withdraw_authority=_WA)
-    account_pubkeys = [a.pubkey for a in ix.accounts]
-    assert PUMP_AMM_PROGRAM in account_pubkeys
-
-
-def test_collect_creator_fee_has_5_accounts():
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_collect_creator_fee_instruction(idl=idl, creator=_USER)
-    assert len(ix.accounts) == 5
-    assert ix.program_id == PUMP_PROGRAM
-    assert ix.data[:8] == COLLECT_CREATOR_FEE_DISCRIMINATOR
-
-
-def test_claim_cashback_user_not_signer():
-    """claim_cashback account[0] (user) must be is_signer=False per IDL."""
-    idl = IDLParser(str(IDL_PATH))
-    ix = build_claim_cashback_instruction(idl=idl, user=_USER)
-    assert ix.accounts[0].pubkey == _USER
-    assert ix.accounts[0].is_signer is False
-
-
-def test_collect_coin_creator_fee_has_8_accounts():
-    ix = build_collect_coin_creator_fee_instruction(creator=_USER)
-    assert len(ix.accounts) == 8
-    assert ix.program_id == PUMP_AMM_PROGRAM
-    assert ix.data[:8] == COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR
-
-
-def test_collect_coin_creator_fee_last_account_is_program():
-    """collect_coin_creator_fee 8th account must be PUMP_AMM_PROGRAM."""
-    ix = build_collect_coin_creator_fee_instruction(creator=_USER)
-    assert ix.accounts[7].pubkey == PUMP_AMM_PROGRAM
+def test_migrate_v2_targets_the_quote_specific_pool():
+    keys = _keys(
+        build_migrate_v2_instruction(
+            mint=MINT,
+            user=USER,
+            withdraw_authority=Pubkey.new_unique(),
+            quote_mint=QUOTE,
+            quote_token_program=TOKEN_2022_PROGRAM,
+        )
+    )
+    pool = derive_amm_pool(MINT, QUOTE)
+    assert keys[3] == QUOTE
+    assert keys[10] == pool
+    assert keys[15] == derive_amm_lp_mint(pool)
+    assert keys[18] == find_ata(pool, QUOTE, TOKEN_2022_PROGRAM)
+    assert keys[24] == RENT

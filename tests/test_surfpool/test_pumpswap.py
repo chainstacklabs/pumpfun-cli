@@ -20,9 +20,9 @@ async def test_get_pumpswap_info(surfpool_rpc, graduated_mint):
 
     assert "error" not in result, f"Unexpected error: {result}"
     assert result["pool_address"]
-    assert result["price_sol"] > 0
+    assert result["price"] > 0
     assert result["base_reserves"] >= 0
-    assert result["quote_reserves_sol"] >= 0
+    assert result["quote_reserves"] >= 0
     assert isinstance(result["mayhem_mode"], bool)
 
 
@@ -36,7 +36,7 @@ async def test_buy_pumpswap(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=graduated_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         rpc_timeout=SURFPOOL_TIMEOUT,
     )
@@ -45,7 +45,7 @@ async def test_buy_pumpswap(
     assert result["action"] == "buy"
     assert result["venue"] == "pumpswap"
     assert result["mint"] == graduated_mint
-    assert result["sol_spent"] == 0.001
+    assert result["quote_spent"] == 0.001
     assert result["tokens_received"] > 0
     assert result["signature"]
 
@@ -61,7 +61,7 @@ async def test_buy_then_sell_pumpswap(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=graduated_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=50,
         rpc_timeout=SURFPOOL_TIMEOUT,
         confirm=True,
@@ -82,7 +82,7 @@ async def test_buy_then_sell_pumpswap(
     assert sell_result["action"] == "sell"
     assert sell_result["venue"] == "pumpswap"
     assert sell_result["tokens_sold"] > 0
-    assert sell_result["sol_received"] > 0
+    assert sell_result["quote_received"] > 0
     assert sell_result["signature"]
 
 
@@ -96,7 +96,7 @@ async def test_buy_then_partial_sell_pumpswap(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=graduated_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=50,
         rpc_timeout=SURFPOOL_TIMEOUT,
         confirm=True,

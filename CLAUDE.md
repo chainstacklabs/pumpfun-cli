@@ -53,7 +53,7 @@ src/pumpfun_cli/
 ├── output.py           # render() + error() — TTY-aware output
 ├── commands/           # Thin CLI layer (config, info, launch, tokens, trade, tx_status, wallet)
 ├── core/               # Business logic (config, info, launch, pumpswap, tokens, trade, tx_status, validate, wallet)
-└── protocol/           # Solana primitives (address, client, contracts, curve, idl_parser, instructions, pumpswap)
+└── protocol/           # Solana primitives (address, client, contracts, curve, idl_parser, instructions, pumpswap, quote)
 
 tests/
 ├── test_commands/      # CLI smoke tests
@@ -66,7 +66,7 @@ tests/
 
 **Output:** Use `render(data, json_mode)` for all output — returns `True` if it emitted JSON (non-TTY or `--json`), `False` in TTY mode. Commands use `if not render(...):` to branch into human-readable output. Use `error(msg, hint, exit_code)` for failures — prints to stderr and raises `SystemExit`. Never use `print()`.
 
-**Error handling:** `error()` raises `SystemExit` — code after it is unreachable. Core functions return `dict` with `"error"` key for expected failures (graduated tokens, not found, slippage exceeded, insufficient_balance). Catch `ValueError` for wrong wallet password in every command that decrypts. Buy/sell functions perform pre-trade balance validation — SOL balance for buys (including fees + ATA rent), token balance for sells with specific amounts.
+**Error handling:** `error()` raises `SystemExit` — code after it is unreachable. Core functions return `dict` with `"error"` key for expected failures (graduated tokens, not found, slippage exceeded, insufficient_balance). Catch `ValueError` for wrong wallet password in every command that decrypts. Buy/sell functions perform pre-trade balance validation — SOL for fees and rent, the quote asset for the spend, token balance for sells with specific amounts.
 
 **Auto-routing:** When `buy_token` / `sell_token` returns `{"error": "graduated"}`, the command layer in `commands/trade.py` automatically retries via `buy_pumpswap` / `sell_pumpswap` (PumpSwap AMM). Never suppress or swallow the `"graduated"` error in core — the routing decision belongs in the command layer.
 
@@ -101,18 +101,41 @@ from pumpfun_cli.output import render, error
 ## Working with Solana Accounts
 
 ```python
-# Derive PDA
 from pumpfun_cli.protocol.address import derive_bonding_curve
+from pumpfun_cli.protocol.curve import parse_bonding_curve
+from pumpfun_cli.protocol.instructions import build_buy_exact_quote_in_v2_instruction
+from pumpfun_cli.protocol.quote import get_mint_info
 
-# Fetch and decode
-data = await client.get_account_data(address)
-state = idl.decode_account_data(data, "BondingCurve", skip_discriminator=True)
-
-# Build instructions
-from pumpfun_cli.protocol.instructions import build_buy_exact_sol_in_instructions
-ixs = build_buy_exact_sol_in_instructions(idl=idl, mint=mint, user=keypair.pubkey(), ...)
-sig = await client.send_tx(ixs, [keypair], compute_units=..., confirm=True)
+resp = await client.get_account_info(derive_bonding_curve(mint))
+state = parse_bonding_curve(bytes(resp.value.data))
+quote_program, quote_decimals = await get_mint_info(client, state["quote_mint"])
+ix = build_buy_exact_quote_in_v2_instruction(mint=mint, creator=state["creator"], ...)
+sig = await client.send_tx([ix], [keypair], compute_units=..., confirm=True)
 ```
+
+## Protocol rules
+
+Read `docs/pumpfun-protocol.md` in pumpfun-bonkfun-bot before changing account
+lists; these are the ones this CLI depends on.
+
+- **Amounts are in the coin's quote asset**, read from `BondingCurve.quote_mint`
+  (all zeros means SOL; instructions take wrapped SOL there). Its decimals come
+  from the mint via `get_mint_info`; never assume 9.
+- Bonding-curve trades use `buy_exact_quote_in_v2` / `sell_v2`: 27 / 26
+  accounts, identical for every coin. A SOL coin's quote accounts are only
+  seed-checked, so don't create the user's WSOL ATA for them.
+- `creator_vault` derives from `BondingCurve.creator` as stored. On holder-reward
+  and fee-sharing coins that is not the wallet that launched the coin.
+- PumpSwap swaps carry accounts the IDL omits: cashback account(s) on a cashback
+  pool, then `pool-v2` **only on a canonical pool** (`coin_creator` set), then the
+  buyback recipient and its quote ATA last. The canonical pool is derived from the
+  mint and the curve's quote mint.
+- `send_tx` sends v0 and falls back to v1 when the transaction exceeds 1232
+  bytes (a cashback-pool buy, a launch with a buy). v1 carries the compute budget
+  in its header.
+- `create_v2` rejects cashback (6082). A creator fee only applies on a coin
+  priced in a `QuoteControl` mint, and mayhem coins must be SOL-priced; launch
+  refuses both before sending.
 
 ## Environment
 

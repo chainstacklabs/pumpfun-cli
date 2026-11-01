@@ -31,7 +31,7 @@ async def test_buy_cashback_token(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=cashback_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
     )
 
@@ -51,7 +51,7 @@ async def test_buy_then_sell_cashback_token(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=cashback_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         confirm=True,
         compute_units=200_000,
@@ -70,7 +70,7 @@ async def test_buy_then_sell_cashback_token(
     assert "error" not in sell_result, f"Sell cashback token failed: {sell_result}"
     assert sell_result["action"] == "sell"
     assert sell_result["tokens_sold"] > 0
-    assert sell_result["sol_received"] > 0
+    assert sell_result["quote_received"] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ async def test_cashback_token_dry_run(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=cashback_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         dry_run=True,
     )

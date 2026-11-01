@@ -12,10 +12,10 @@ async def test_get_token_info_graduated(surfpool_rpc, graduated_mint):
 
     assert "error" not in result, f"Unexpected error: {result}"
     assert result["graduated"] is True
-    assert result["price_sol"] >= 0
+    assert result["price"] >= 0
 
     # Pool data is enriched only if getProgramAccounts succeeds.
     # On surfpool this may timeout, so pool_address is optional.
     if "pool_address" in result:
         assert result["base_reserves"] >= 0
-        assert result["quote_reserves_sol"] >= 0
+        assert result["quote_reserves"] >= 0

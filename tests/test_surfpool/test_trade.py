@@ -13,14 +13,14 @@ async def test_buy_token(surfpool_rpc, funded_keypair, test_keystore, test_passw
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=active_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
     )
 
     assert "error" not in result, f"Buy failed: {result}"
     assert result["action"] == "buy"
     assert result["mint"] == active_mint
-    assert result["sol_spent"] == 0.001
+    assert result["quote_spent"] == 0.001
     assert result["tokens_received"] > 0
     assert result["signature"]
 
@@ -36,7 +36,7 @@ async def test_buy_then_sell(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=active_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         confirm=True,
     )
@@ -54,7 +54,7 @@ async def test_buy_then_sell(
     assert "error" not in sell_result, f"Sell failed: {sell_result}"
     assert sell_result["action"] == "sell"
     assert sell_result["tokens_sold"] > 0
-    assert sell_result["sol_received"] > 0
+    assert sell_result["quote_received"] > 0
     assert sell_result["signature"]
 
 
@@ -68,7 +68,7 @@ async def test_buy_with_confirm(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=active_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         confirm=True,
     )
@@ -87,7 +87,7 @@ async def test_buy_graduated_token_fails(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=graduated_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
     )
     assert result["error"] == "graduated"
@@ -103,7 +103,7 @@ async def test_buy_then_partial_sell(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=active_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         confirm=True,
     )
@@ -135,7 +135,7 @@ async def test_buy_without_confirm(
         keystore_path=str(test_keystore),
         password=test_password,
         mint_str=active_mint,
-        sol_amount=0.001,
+        amount=0.001,
         slippage=25,
         confirm=False,
     )

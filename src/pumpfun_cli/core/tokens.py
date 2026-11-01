@@ -2,9 +2,31 @@
 
 import httpx
 
-from pumpfun_cli.protocol.curve import get_bonding_progress, get_token_price_sol
+from pumpfun_cli.protocol.contracts import HTTP_HEADERS
 
 PUMP_API = "https://frontend-api-v3.pump.fun"
+
+# The frontend API reports SOL-named reserves; these read them as the API returns them.
+_LAMPORTS_PER_SOL = 1_000_000_000
+_TOKEN_DECIMALS = 6
+_GRADUATION_SOL = 85.0
+
+
+def get_token_price_sol(token: dict) -> float:
+    """Price in SOL per whole token from the API's virtual reserves."""
+    if token["virtual_token_reserves"] == 0:
+        return 0.0
+    return (
+        token["virtual_sol_reserves"]
+        / token["virtual_token_reserves"]
+        * 10**_TOKEN_DECIMALS
+        / _LAMPORTS_PER_SOL
+    )
+
+
+def get_bonding_progress(token: dict) -> float:
+    """Approximate completion 0.0 – 1.0 from the API's real SOL reserves."""
+    return min(token["real_sol_reserves"] / _LAMPORTS_PER_SOL / _GRADUATION_SOL, 1.0)
 
 
 def _enrich_tokens(tokens: list[dict]) -> list[dict]:
@@ -22,7 +44,7 @@ def _enrich_tokens(tokens: list[dict]) -> list[dict]:
 
 
 async def get_trending_tokens(limit: int = 20) -> list[dict]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=HTTP_HEADERS) as client:
         resp = await client.get(f"{PUMP_API}/coins/top-runners")
         resp.raise_for_status()
         runners = resp.json()
@@ -41,7 +63,7 @@ async def get_trending_tokens(limit: int = 20) -> list[dict]:
 
 
 async def get_recommended_tokens(limit: int = 50) -> list[dict]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=HTTP_HEADERS) as client:
         resp = await client.get(
             f"{PUMP_API}/coins/recommended",
             params={"limit": min(limit, 300), "includeNsfw": "false"},

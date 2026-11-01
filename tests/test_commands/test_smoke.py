@@ -173,12 +173,14 @@ def test_tokens_no_subcommand_shows_help():
     assert result.exit_code == 0
 
 
-def test_launch_help_shows_cashback():
-    """Launch --help includes --cashback flag."""
+def test_launch_help_shows_quote_options():
+    """Launch --help lists the create_v2 options and no longer offers cashback."""
     result = runner.invoke(app, ["launch", "--help"])
     assert result.exit_code == 0
     out = _strip_ansi(result.output)
-    assert "--cashback" in out
+    for flag in ("--quote-mint", "--creator-fee-bps", "--holder-reward", "--slippage"):
+        assert flag in out
+    assert "--cashback" not in out
 
 
 @pytest.mark.parametrize("limit", ["0", "-1"])

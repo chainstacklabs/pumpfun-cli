@@ -65,9 +65,18 @@ pumpfun sell <mint> all
 # Check if a transaction landed
 pumpfun tx-status <signature>
 
-# Launch a token
-pumpfun launch --name "MyToken" --ticker "MTK" --desc "A great token"
+# Launch a token, buying it in the same transaction
+pumpfun launch --name "MyToken" --ticker "MTK" --uri https://example.com/mytoken.json --buy 0.1
 ```
+
+pump.fun no longer accepts anonymous metadata uploads, so `launch` takes the
+URI of a metadata JSON you host (`name`, `symbol`, `description`, `image`).
+Without `--uri` it still tries the upload and says so when it is refused.
+
+Amounts are in the coin's quote asset. Most pump.fun coins are priced in SOL,
+but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
+`info` read it from the coin and label their output with it. Buying such a coin
+spends that asset, so the wallet has to hold it.
 
 ## Commands
 
@@ -83,18 +92,20 @@ Token info (requires RPC):
   pumpfun info <mint>                     Price, bonding progress, reserves
 
 Trading (requires RPC + wallet):
-  pumpfun buy <mint> <sol_amount> [--slippage N] [--dry-run] [--confirm]
-  pumpfun sell <mint> <amount|all> [--slippage N] [--dry-run] [--confirm]
-  pumpfun migrate <mint> [--slippage N] [--confirm]
-  pumpfun claim-cashback <mint> [--confirm]
-  pumpfun collect-creator-fee <mint> [--confirm]
-  pumpfun close-volume-acc <mint> [--confirm]
+  pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--confirm]
+  pumpfun sell <mint> <amount|all> [--slippage N] [--force-amm] [--dry-run] [--confirm]
+  pumpfun migrate <mint> [--confirm]
+  pumpfun claim-cashback [--quote-mint M] [--confirm]
+  pumpfun collect-creator-fee [--quote-mint M] [--confirm]
+  pumpfun close-volume-acc [--confirm]
 
 Transaction inspection (requires RPC):
   pumpfun tx-status <signature>              Confirmation status, slot, fee, errors
 
 Token launch (requires RPC + wallet):
-  pumpfun launch --name X --ticker Y --desc Z [--image path] [--buy N]
+  pumpfun launch --name X --ticker Y [--uri U | --desc D --image P] [--buy N]
+                 [--quote-mint M] [--creator-fee-bps N] [--holder-reward]
+                 [--mayhem] [--slippage N] [--confirm]
 
 Wallet management:
   pumpfun wallet create                   Generate + encrypt keypair
@@ -131,7 +142,7 @@ Global options:
 | `info` | Solana RPC (`getAccountInfo` for bonding curve PDA) | JSON-RPC |
 | `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
 | `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
-| `launch` | `pump.fun/api/ipfs` (metadata upload) + Solana RPC (`sendTransaction`) | HTTPS + JSON-RPC |
+| `launch` | Solana RPC (`sendTransaction`); `pump.fun/api/ipfs` only without `--uri` | JSON-RPC (+ HTTPS) |
 | `tx-status` | Solana RPC (`getTransaction`) | JSON-RPC |
 | `migrate` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `claim-cashback` | Solana RPC (`sendTransaction`) | JSON-RPC |

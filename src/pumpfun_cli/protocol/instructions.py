@@ -1,890 +1,695 @@
-"""Build buy/sell/create instructions for the pump.fun program."""
+"""Instruction builders for the pump.fun and PumpSwap programs.
 
+Bonding-curve trades use buy_v2 / buy_exact_quote_in_v2 / sell_v2: a fixed
+account list, the same for every coin whatever its quote asset, mayhem or
+cashback status. The IDL under-reports PumpSwap's swap accounts, so those
+lists follow what the program reads on chain, documented at each builder.
+"""
+
+import secrets
 import struct
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
+from solders.system_program import CreateAccountWithSeedParams, create_account_with_seed
 from spl.token.instructions import (
+    close_account,
     create_idempotent_associated_token_account,
-    get_associated_token_address,
+    initialize_account,
 )
+from spl.token.models import CloseAccountParams, InitializeAccountParams
 
 from pumpfun_cli.protocol.address import (
     derive_amm_creator_vault,
     derive_amm_fee_config,
     derive_amm_global_volume_accumulator,
+    derive_amm_lp_mint,
+    derive_amm_pool,
     derive_amm_pool_v2,
     derive_amm_user_volume_accumulator,
-    get_buy_accounts,
-    get_sell_accounts,
+    derive_bonding_curve,
+    derive_creator_vault,
+    derive_mayhem_state,
+    derive_pool_authority,
+    find_ata,
+    find_fee_config,
+    find_global_volume_accumulator,
+    find_quote_control,
+    find_sharing_config,
+    find_user_volume_accumulator,
 )
 from pumpfun_cli.protocol.contracts import (
     ASSOCIATED_TOKEN_PROGRAM,
+    ATA_RENT_LAMPORTS,
+    BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR,
+    BUY_V2_DISCRIMINATOR,
+    BUYBACK_FEE_RECIPIENTS,
+    CLAIM_CASHBACK_V2_DISCRIMINATOR,
+    CLOSE_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR,
+    COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR,
+    COLLECT_CREATOR_FEE_V2_DISCRIMINATOR,
+    CREATE_V2_DISCRIMINATOR,
+    EXTEND_ACCOUNT_DISCRIMINATOR,
     MAYHEM_GLOBAL_PARAMS,
     MAYHEM_PROGRAM_ID,
     MAYHEM_SOL_VAULT,
+    MIGRATE_V2_DISCRIMINATOR,
+    NORMAL_FEE_RECIPIENTS,
     PUMP_AMM_PROGRAM,
     PUMP_EVENT_AUTHORITY,
     PUMP_FEE_PROGRAM,
     PUMP_GLOBAL,
+    PUMP_MINT_AUTHORITY,
     PUMP_PROGRAM,
     PUMP_SWAP_EVENT_AUTHORITY,
     PUMP_SWAP_GLOBAL_CONFIG,
-    PUMPSWAP_BUY_DISCRIMINATOR,
+    PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR,
+    PUMPSWAP_INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR,
     PUMPSWAP_SELL_DISCRIMINATOR,
+    RENT,
+    RESERVED_FEE_RECIPIENTS,
+    SELL_V2_DISCRIMINATOR,
     SYSTEM_PROGRAM,
     TOKEN_2022_PROGRAM,
+    TOKEN_ACCOUNT_SIZE,
     TOKEN_PROGRAM,
     WSOL_MINT,
 )
-from pumpfun_cli.protocol.idl_parser import IDLParser
 
-# OptionBool(true) = 1 byte: the IDL defines OptionBool as struct { bool },
-# so it serialises to a single 0x01 byte, NOT 2 bytes (Option<bool>).
+# OptionBool(true) is a single-field struct: one 0x01 byte, not a tagged Option.
 _TRACK_VOLUME = bytes([1])
 
 
-def build_buy_instructions(
-    idl: IDLParser,
-    mint: Pubkey,
-    user: Pubkey,
-    bonding_curve: Pubkey,
-    assoc_bc: Pubkey,
-    creator: Pubkey,
-    is_mayhem: bool,
-    token_amount: int,
-    max_sol_cost: int,
-    token_program: Pubkey = TOKEN_2022_PROGRAM,
-) -> list[Instruction]:
-    """Build the ATA-creation + buy instructions for a pump.fun token.
+def _meta(pubkey: Pubkey, writable: bool = False, signer: bool = False) -> AccountMeta:
+    return AccountMeta(pubkey=pubkey, is_signer=signer, is_writable=writable)
 
-    Returns a list of two instructions:
-    1. Idempotent ATA creation for the user's token account.
-    2. The buy instruction with 16 base accounts + bonding_curve_v2.
+
+# --- Quote settlement ---
+
+
+def quote_settlement_account(
+    user: Pubkey, quote_mint: Pubkey, quote_token_program: Pubkey, funding: int = 0
+) -> tuple[Pubkey, list[Instruction], list[Instruction]]:
+    """The account a PumpSwap trade pays from or into, with setup and teardown.
+
+    Wrapped SOL goes through a throwaway account at a fresh seed, funded with
+    `funding` lamports and closed in the same transaction, so whatever is left
+    returns as SOL and any WSOL the wallet already holds is left alone. Any
+    other quote asset uses the wallet's ATA, created if missing.
+
+    Returns:
+        (account, instructions before the trade, instructions after it)
     """
-    # --- ATA creation instruction ---
-    ata_ix = create_idempotent_associated_token_account(
-        payer=user, owner=user, mint=mint, token_program_id=token_program
-    )
-
-    # --- Buy instruction ---
-    accounts = get_buy_accounts(
-        mint=mint,
-        bonding_curve=bonding_curve,
-        assoc_bc=assoc_bc,
-        user=user,
-        creator=creator,
-        is_mayhem=is_mayhem,
-        token_program=token_program,
-    )
-
-    buy_accounts = [
-        AccountMeta(pubkey=accounts["global"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["mint"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["bonding_curve"], is_signer=False, is_writable=True),
-        AccountMeta(
-            pubkey=accounts["associated_bonding_curve"], is_signer=False, is_writable=True
-        ),
-        AccountMeta(pubkey=accounts["user_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["user"], is_signer=True, is_writable=True),
-        AccountMeta(pubkey=accounts["system_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["token_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["creator_vault"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["event_authority"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["program"], is_signer=False, is_writable=False),
-        AccountMeta(
-            pubkey=accounts["global_volume_accumulator"], is_signer=False, is_writable=False
-        ),
-        AccountMeta(pubkey=accounts["user_volume_accumulator"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["fee_config"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["bonding_curve_v2"], is_signer=False, is_writable=False),
-    ]
-
-    discriminators = idl.get_instruction_discriminators()
-    instruction_data = (
-        discriminators["buy"] + struct.pack("<Q", token_amount) + struct.pack("<Q", max_sol_cost)
-    )
-
-    buy_ix = Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=buy_accounts,
-        data=instruction_data,
-    )
-
-    return [ata_ix, buy_ix]
-
-
-def build_buy_exact_sol_in_instructions(
-    idl: IDLParser,
-    mint: Pubkey,
-    user: Pubkey,
-    bonding_curve: Pubkey,
-    assoc_bc: Pubkey,
-    creator: Pubkey,
-    is_mayhem: bool,
-    spendable_sol_in: int,
-    min_tokens_out: int,
-    token_program: Pubkey = TOKEN_2022_PROGRAM,
-) -> list[Instruction]:
-    """Build ATA-creation + buy_exact_sol_in instructions.
-
-    Same accounts as buy, different discriminator and arg semantics:
-    - spendable_sol_in: exact SOL budget (fees deducted from this)
-    - min_tokens_out: minimum tokens to receive (slippage protection)
-    """
-    from pumpfun_cli.protocol.contracts import BUY_EXACT_SOL_IN_DISCRIMINATOR
-
-    ata_ix = create_idempotent_associated_token_account(
-        payer=user, owner=user, mint=mint, token_program_id=token_program
-    )
-
-    accounts = get_buy_accounts(
-        mint=mint,
-        bonding_curve=bonding_curve,
-        assoc_bc=assoc_bc,
-        user=user,
-        creator=creator,
-        is_mayhem=is_mayhem,
-        token_program=token_program,
-    )
-
-    buy_accounts = [
-        AccountMeta(pubkey=accounts["global"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["mint"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["bonding_curve"], is_signer=False, is_writable=True),
-        AccountMeta(
-            pubkey=accounts["associated_bonding_curve"], is_signer=False, is_writable=True
-        ),
-        AccountMeta(pubkey=accounts["user_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["user"], is_signer=True, is_writable=True),
-        AccountMeta(pubkey=accounts["system_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["token_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["creator_vault"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["event_authority"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["program"], is_signer=False, is_writable=False),
-        AccountMeta(
-            pubkey=accounts["global_volume_accumulator"], is_signer=False, is_writable=False
-        ),
-        AccountMeta(pubkey=accounts["user_volume_accumulator"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["fee_config"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["bonding_curve_v2"], is_signer=False, is_writable=False),
-    ]
-
-    instruction_data = (
-        BUY_EXACT_SOL_IN_DISCRIMINATOR
-        + struct.pack("<Q", spendable_sol_in)
-        + struct.pack("<Q", min_tokens_out)
-    )
-
-    buy_ix = Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=buy_accounts,
-        data=instruction_data,
-    )
-
-    return [ata_ix, buy_ix]
-
-
-def build_sell_instructions(
-    idl: IDLParser,
-    mint: Pubkey,
-    user: Pubkey,
-    bonding_curve: Pubkey,
-    assoc_bc: Pubkey,
-    creator: Pubkey,
-    is_mayhem: bool,
-    token_amount: int,
-    min_sol_output: int,
-    is_cashback: bool = False,
-    token_program: Pubkey = TOKEN_2022_PROGRAM,
-) -> list[Instruction]:
-    """Build the sell instruction for a pump.fun token.
-
-    Returns a list containing a single sell instruction with 14 base accounts
-    plus remaining accounts (user_volume_accumulator for cashback, bonding_curve_v2 always).
-    """
-    accounts = get_sell_accounts(
-        mint=mint,
-        bonding_curve=bonding_curve,
-        assoc_bc=assoc_bc,
-        user=user,
-        creator=creator,
-        is_mayhem=is_mayhem,
-        token_program=token_program,
-    )
-
-    sell_accounts = [
-        AccountMeta(pubkey=accounts["global"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["mint"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["bonding_curve"], is_signer=False, is_writable=True),
-        AccountMeta(
-            pubkey=accounts["associated_bonding_curve"], is_signer=False, is_writable=True
-        ),
-        AccountMeta(pubkey=accounts["user_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["user"], is_signer=True, is_writable=True),
-        AccountMeta(pubkey=accounts["system_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["creator_vault"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=accounts["token_program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["event_authority"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["program"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee_config"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=accounts["fee_program"], is_signer=False, is_writable=False),
-    ]
-
-    if is_cashback:
-        sell_accounts.append(
-            AccountMeta(
-                pubkey=accounts["user_volume_accumulator"], is_signer=False, is_writable=True
-            ),
+    if quote_mint != WSOL_MINT:
+        ata = find_ata(user, quote_mint, quote_token_program)
+        create = create_idempotent_associated_token_account(
+            user, user, quote_mint, quote_token_program
         )
-    sell_accounts.append(
-        AccountMeta(pubkey=accounts["bonding_curve_v2"], is_signer=False, is_writable=False),
+        return ata, [create], []
+
+    seed = secrets.token_hex(16)
+    account = Pubkey.create_with_seed(user, seed, TOKEN_PROGRAM)
+    open_ixs = [
+        create_account_with_seed(
+            CreateAccountWithSeedParams(
+                from_pubkey=user,
+                to_pubkey=account,
+                base=user,
+                seed=seed,
+                lamports=funding + ATA_RENT_LAMPORTS,
+                space=TOKEN_ACCOUNT_SIZE,
+                owner=TOKEN_PROGRAM,
+            )
+        ),
+        initialize_account(
+            InitializeAccountParams(
+                program_id=TOKEN_PROGRAM, account=account, mint=WSOL_MINT, owner=user
+            )
+        ),
+    ]
+    close_ixs = [
+        close_account(
+            CloseAccountParams(program_id=TOKEN_PROGRAM, account=account, dest=user, owner=user)
+        )
+    ]
+    return account, open_ixs, close_ixs
+
+
+# --- pump.fun bonding curve: v2 trades ---
+
+
+def pick_fee_recipient(is_mayhem_mode: bool) -> Pubkey:
+    """A fee recipient from the set the program expects for this coin."""
+    return secrets.choice(RESERVED_FEE_RECIPIENTS if is_mayhem_mode else NORMAL_FEE_RECIPIENTS)
+
+
+def build_v2_accounts(
+    *,
+    mint: Pubkey,
+    creator: Pubkey,
+    user: Pubkey,
+    quote_mint: Pubkey,
+    base_token_program: Pubkey,
+    quote_token_program: Pubkey,
+    is_mayhem_mode: bool,
+    is_buy: bool,
+) -> list[AccountMeta]:
+    """The account list buy_v2, buy_exact_quote_in_v2 and sell_v2 share.
+
+    27 accounts for a buy, 26 for a sell (no global_volume_accumulator). Every
+    account is mandatory. For a SOL-paired coin `quote_mint` is wrapped SOL;
+    the user's quote account is only seed-checked and must not be created.
+
+    Args:
+        creator: BondingCurve.creator as read from chain. On a holder-reward or
+            fee-sharing coin it differs from whoever launched the coin, and the
+            creator vault derives from it.
+    """
+    bonding_curve = derive_bonding_curve(mint)
+    creator_vault = derive_creator_vault(creator)
+    user_volume_accumulator = find_user_volume_accumulator(user)
+    fee_recipient = pick_fee_recipient(is_mayhem_mode)
+    buyback_recipient = secrets.choice(BUYBACK_FEE_RECIPIENTS)
+
+    def quote_ata(owner: Pubkey) -> Pubkey:
+        return find_ata(owner, quote_mint, quote_token_program)
+
+    accounts = [
+        _meta(PUMP_GLOBAL),
+        _meta(mint),
+        _meta(quote_mint),
+        _meta(base_token_program),
+        _meta(quote_token_program),
+        _meta(ASSOCIATED_TOKEN_PROGRAM),
+        _meta(fee_recipient, writable=True),
+        _meta(quote_ata(fee_recipient), writable=True),
+        _meta(buyback_recipient, writable=True),
+        _meta(quote_ata(buyback_recipient), writable=True),
+        _meta(bonding_curve, writable=True),
+        _meta(find_ata(bonding_curve, mint, base_token_program), writable=True),
+        _meta(quote_ata(bonding_curve), writable=True),
+        _meta(user, writable=True, signer=True),
+        _meta(find_ata(user, mint, base_token_program), writable=True),
+        _meta(quote_ata(user), writable=True),
+        _meta(creator_vault, writable=True),
+        _meta(quote_ata(creator_vault), writable=True),
+        _meta(find_sharing_config(mint)),
+    ]
+    if is_buy:
+        accounts.append(_meta(find_global_volume_accumulator()))
+    accounts += [
+        _meta(user_volume_accumulator, writable=True),
+        _meta(quote_ata(user_volume_accumulator), writable=True),
+        _meta(find_fee_config()),
+        _meta(PUMP_FEE_PROGRAM),
+        _meta(SYSTEM_PROGRAM),
+        _meta(PUMP_EVENT_AUTHORITY),
+        _meta(PUMP_PROGRAM),
+    ]
+    return accounts
+
+
+def build_buy_exact_quote_in_v2_instruction(
+    *,
+    mint: Pubkey,
+    creator: Pubkey,
+    user: Pubkey,
+    spendable_quote_in: int,
+    min_tokens_out: int,
+    quote_mint: Pubkey = WSOL_MINT,
+    base_token_program: Pubkey = TOKEN_2022_PROGRAM,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+    is_mayhem_mode: bool = False,
+) -> Instruction:
+    """Spend exactly `spendable_quote_in` (raw quote units, fees included), receive at least
+    `min_tokens_out` raw tokens."""
+    return Instruction(
+        PUMP_PROGRAM,
+        BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR
+        + struct.pack("<QQ", spendable_quote_in, min_tokens_out),
+        build_v2_accounts(
+            mint=mint,
+            creator=creator,
+            user=user,
+            quote_mint=quote_mint,
+            base_token_program=base_token_program,
+            quote_token_program=quote_token_program,
+            is_mayhem_mode=is_mayhem_mode,
+            is_buy=True,
+        ),
     )
 
-    discriminators = idl.get_instruction_discriminators()
-    instruction_data = (
-        discriminators["sell"]
-        + struct.pack("<Q", token_amount)
-        + struct.pack("<Q", min_sol_output)
+
+def build_buy_v2_instruction(
+    *,
+    mint: Pubkey,
+    creator: Pubkey,
+    user: Pubkey,
+    token_amount: int,
+    max_quote_cost: int,
+    quote_mint: Pubkey = WSOL_MINT,
+    base_token_program: Pubkey = TOKEN_2022_PROGRAM,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+    is_mayhem_mode: bool = False,
+) -> Instruction:
+    """Buy exactly `token_amount` raw tokens, spending at most `max_quote_cost` raw quote units."""
+    return Instruction(
+        PUMP_PROGRAM,
+        BUY_V2_DISCRIMINATOR + struct.pack("<QQ", token_amount, max_quote_cost),
+        build_v2_accounts(
+            mint=mint,
+            creator=creator,
+            user=user,
+            quote_mint=quote_mint,
+            base_token_program=base_token_program,
+            quote_token_program=quote_token_program,
+            is_mayhem_mode=is_mayhem_mode,
+            is_buy=True,
+        ),
     )
 
-    sell_ix = Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=sell_accounts,
-        data=instruction_data,
+
+def build_sell_v2_instruction(
+    *,
+    mint: Pubkey,
+    creator: Pubkey,
+    user: Pubkey,
+    token_amount: int,
+    min_quote_out: int,
+    quote_mint: Pubkey = WSOL_MINT,
+    base_token_program: Pubkey = TOKEN_2022_PROGRAM,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+    is_mayhem_mode: bool = False,
+) -> Instruction:
+    """Sell `token_amount` raw tokens for at least `min_quote_out` raw quote units."""
+    return Instruction(
+        PUMP_PROGRAM,
+        SELL_V2_DISCRIMINATOR + struct.pack("<QQ", token_amount, min_quote_out),
+        build_v2_accounts(
+            mint=mint,
+            creator=creator,
+            user=user,
+            quote_mint=quote_mint,
+            base_token_program=base_token_program,
+            quote_token_program=quote_token_program,
+            is_mayhem_mode=is_mayhem_mode,
+            is_buy=False,
+        ),
     )
 
-    return [sell_ix]
+
+# --- pump.fun coin creation ---
 
 
-def _derive_mint_authority() -> Pubkey:
-    """Derive the pump.fun mint authority PDA."""
-    addr, _ = Pubkey.find_program_address([b"mint-authority"], PUMP_PROGRAM)
-    return addr
+def encode_create_v2_trailing_args(
+    *, creator_fee_bps: int | None = None, is_holder_reward: bool | None = None
+) -> bytes:
+    """Encode create_v2's trailing args: is_cashback_enabled, creator_fee_bps, is_holder_reward.
+
+    They are positional with no presence tag, so setting a later one sends the
+    earlier ones too. None omits an arg. Cashback is always sent as false:
+    create_v2 rejects true with 6082 (CashbackDeprecated).
+    """
+    if creator_fee_bps is None and is_holder_reward is None:
+        return b""
+    data = struct.pack("<?", False) + struct.pack("<Q", creator_fee_bps or 0)
+    if is_holder_reward is not None:
+        data += struct.pack("<?", is_holder_reward)
+    return data
 
 
-def _encode_borsh_string(s: str) -> bytes:
-    """Borsh string encoding: 4-byte LE length prefix + UTF-8 bytes."""
-    encoded = s.encode("utf-8")
-    return struct.pack("<I", len(encoded)) + encoded
-
-
-def build_create_instructions(
-    idl: IDLParser,
+def build_create_v2_instruction(
+    *,
     mint: Pubkey,
     user: Pubkey,
+    creator: Pubkey,
     name: str,
     symbol: str,
     uri: str,
-    is_mayhem: bool = False,
-    is_cashback: bool = False,
-    token_program: Pubkey = TOKEN_2022_PROGRAM,
-) -> list[Instruction]:
-    """Build create_v2 token instruction for pump.fun (Token2022).
-
-    The create_v2 instruction initialises a new token mint with Token-2022,
-    bonding curve, and optionally mayhem state.  It requires two signers:
-    the wallet (user/payer) and the freshly generated mint keypair.
-
-    Account order follows the IDL ``create_v2`` instruction definition.
-    """
-    from pumpfun_cli.protocol.address import (
-        derive_associated_bonding_curve,
-        derive_bonding_curve,
-        derive_mayhem_state,
-        derive_mayhem_token_vault,
-    )
-
-    bonding_curve = derive_bonding_curve(mint)
-    assoc_bc = derive_associated_bonding_curve(mint, bonding_curve, token_program)
-    mint_auth = _derive_mint_authority()
-
-    mayhem_state = derive_mayhem_state(mint)
-    mayhem_token_vault = derive_mayhem_token_vault(mint)
-
-    create_accounts = [
-        AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=mint_auth, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=assoc_bc, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        # Mayhem accounts are always required by create_v2 per IDL,
-        # regardless of is_mayhem_mode flag value.
-        AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=mayhem_token_vault, is_signer=False, is_writable=True),
-    ]
-
-    create_accounts.extend(
-        [
-            AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-        ]
-    )
-
-    discriminators = idl.get_instruction_discriminators()
-
-    instruction_data = (
-        discriminators["create_v2"]
-        + _encode_borsh_string(name)
-        + _encode_borsh_string(symbol)
-        + _encode_borsh_string(uri)
-        + bytes(user)  # creator arg
-        + struct.pack("<?", is_mayhem)  # is_mayhem_mode: bool
-        + struct.pack("<?", is_cashback)  # is_cashback_enabled: OptionBool
-    )
-
-    create_ix = Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=create_accounts,
-        data=instruction_data,
-    )
-
-    return [create_ix]
-
-
-def build_extend_account_instruction(
-    idl: IDLParser,
-    bonding_curve: Pubkey,
-    user: Pubkey,
+    is_mayhem_mode: bool = False,
+    creator_fee_bps: int | None = None,
+    is_holder_reward: bool | None = None,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
 ) -> Instruction:
-    """Build extend_account instruction to expand bonding curve account size.
+    """Build create_v2, which mints the coin under Token-2022.
 
-    Required after create_v2 for frontend visibility.
+    20 accounts: the IDL's 16, then quote_mint, the curve's quote account, the
+    quote token program and QuoteControl as remaining accounts. They are sent
+    for SOL-paired coins too; leaving them out lands a SOL coin and silently
+    drops any creator fee.
     """
+    bonding_curve = derive_bonding_curve(mint)
     accounts = [
-        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+        _meta(mint, writable=True, signer=True),
+        _meta(PUMP_MINT_AUTHORITY),
+        _meta(bonding_curve, writable=True),
+        _meta(find_ata(bonding_curve, mint, TOKEN_2022_PROGRAM), writable=True),
+        _meta(PUMP_GLOBAL),
+        _meta(user, writable=True, signer=True),
+        _meta(SYSTEM_PROGRAM),
+        _meta(TOKEN_2022_PROGRAM),
+        _meta(ASSOCIATED_TOKEN_PROGRAM),
+        _meta(MAYHEM_PROGRAM_ID, writable=True),
+        _meta(MAYHEM_GLOBAL_PARAMS),
+        _meta(MAYHEM_SOL_VAULT, writable=True),
+        _meta(derive_mayhem_state(mint), writable=True),
+        _meta(find_ata(MAYHEM_SOL_VAULT, mint, TOKEN_2022_PROGRAM), writable=True),
+        _meta(PUMP_EVENT_AUTHORITY),
+        _meta(PUMP_PROGRAM),
+        _meta(quote_mint),
+        _meta(find_ata(bonding_curve, quote_mint, quote_token_program), writable=True),
+        _meta(quote_token_program),
+        _meta(find_quote_control()),
     ]
 
-    discriminators = idl.get_instruction_discriminators()
+    def borsh_string(value: str) -> bytes:
+        encoded = value.encode("utf-8")
+        return struct.pack("<I", len(encoded)) + encoded
+
+    data = (
+        CREATE_V2_DISCRIMINATOR
+        + borsh_string(name)
+        + borsh_string(symbol)
+        + borsh_string(uri)
+        + bytes(creator)
+        + struct.pack("<?", is_mayhem_mode)
+        + encode_create_v2_trailing_args(
+            creator_fee_bps=creator_fee_bps, is_holder_reward=is_holder_reward
+        )
+    )
+    return Instruction(PUMP_PROGRAM, data, accounts)
+
+
+def build_extend_account_instruction(bonding_curve: Pubkey, user: Pubkey) -> Instruction:
+    """Grow the curve past the 125 bytes create_v2 allocates, as pump.fun's frontend expects."""
     return Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=accounts,
-        data=discriminators["extend_account"],
+        PUMP_PROGRAM,
+        EXTEND_ACCOUNT_DISCRIMINATOR,
+        [
+            _meta(bonding_curve, writable=True),
+            _meta(user, writable=True, signer=True),
+            _meta(SYSTEM_PROGRAM),
+            _meta(PUMP_EVENT_AUTHORITY),
+            _meta(PUMP_PROGRAM),
+        ],
     )
 
 
-# --- PumpSwap AMM instruction builders ---
+# --- PumpSwap AMM ---
 
 
-def build_pumpswap_buy_instructions(
+def _pumpswap_accounts(
+    *,
     user: Pubkey,
     pool_address: Pubkey,
     pool: dict,
-    token_program_id: Pubkey,
+    tokens: dict,
+    user_quote_account: Pubkey,
     fee_recipient: Pubkey,
-    fee_recipient_ata: Pubkey,
-    amount_out: int,
-    max_sol_in: int,
-    sol_wrap_lamports: int,
-) -> list[Instruction]:
-    """Build PumpSwap buy instructions (WSOL wrap + buy swap).
+    buyback_recipient: Pubkey,
+    is_buy: bool,
+) -> list[AccountMeta]:
+    """PumpSwap's swap accounts: the IDL's list, then the extras the program reads.
 
-    Returns 5 instructions:
-    1. Create WSOL ATA (idempotent)
-    2. Transfer SOL to WSOL ATA
-    3. Sync native
-    4. Create base token ATA (idempotent)
-    5. Buy instruction (23 IDL accounts + 2 trailing: vol_wsol_ata, pool_v2)
+    After the IDL's 23 (buy) or 21 (sell): the cashback account(s) on a
+    cashback pool, `pool-v2` on a canonical pool only, and the buyback
+    recipient with its quote account last. The program reads that pair from
+    the end, so sending `pool-v2` on a non-canonical pool shifts it and the
+    trade fails with 6053 (BuybackFeeRecipientNotAuthorized).
     """
-    from solders.system_program import TransferParams, transfer
-    from spl.token.instructions import SyncNativeParams, sync_native
+    base_mint = pool["base_mint"]
+    quote_mint = pool["quote_mint"]
+    base_program = tokens["base_token_program"]
+    quote_program = tokens["quote_token_program"]
+    creator_vault = derive_amm_creator_vault(pool["coin_creator"])
+    user_volume_accumulator = derive_amm_user_volume_accumulator(user)
 
-    user_wsol_ata = get_associated_token_address(user, WSOL_MINT, TOKEN_PROGRAM)
-    user_token_ata = get_associated_token_address(user, pool["base_mint"], token_program_id)
+    def quote_ata(owner: Pubkey) -> Pubkey:
+        return find_ata(owner, quote_mint, quote_program)
 
-    coin_creator = pool["coin_creator"]
-    creator_vault_authority = derive_amm_creator_vault(coin_creator)
-    creator_vault_ata = get_associated_token_address(
-        creator_vault_authority, WSOL_MINT, TOKEN_PROGRAM
-    )
-
-    # 1. Create WSOL ATA
-    create_wsol_ata = create_idempotent_associated_token_account(
-        payer=user,
-        owner=user,
-        mint=WSOL_MINT,
-        token_program_id=TOKEN_PROGRAM,
-    )
-
-    # 2. Transfer SOL to WSOL ATA
-    transfer_ix = transfer(
-        TransferParams(
-            from_pubkey=user,
-            to_pubkey=user_wsol_ata,
-            lamports=sol_wrap_lamports,
-        )
-    )
-
-    # 3. Sync native
-    sync_ix = sync_native(
-        SyncNativeParams(
-            program_id=TOKEN_PROGRAM,
-            account=user_wsol_ata,
-        )
-    )
-
-    # 4. Create base token ATA
-    create_token_ata = create_idempotent_associated_token_account(
-        payer=user,
-        owner=user,
-        mint=pool["base_mint"],
-        token_program_id=token_program_id,
-    )
-
-    # 5. Buy instruction (24 accounts: 17 IDL + 6 remaining + pool_v2 trailing)
-    pool_v2 = derive_amm_pool_v2(pool["base_mint"])
-
-    buy_accounts = [
-        AccountMeta(pubkey=pool_address, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool["base_mint"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=WSOL_MINT, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=user_token_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user_wsol_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool["pool_base_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool["pool_quote_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=fee_recipient_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=creator_vault_authority, is_signer=False, is_writable=False),
-        AccountMeta(
-            pubkey=derive_amm_global_volume_accumulator(), is_signer=False, is_writable=False
-        ),
-        AccountMeta(
-            pubkey=derive_amm_user_volume_accumulator(user), is_signer=False, is_writable=True
-        ),
-        AccountMeta(pubkey=derive_amm_fee_config(), is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool_v2, is_signer=False, is_writable=False),
+    accounts = [
+        _meta(pool_address, writable=True),
+        _meta(user, writable=True, signer=True),
+        _meta(PUMP_SWAP_GLOBAL_CONFIG),
+        _meta(base_mint),
+        _meta(quote_mint),
+        _meta(find_ata(user, base_mint, base_program), writable=True),
+        _meta(user_quote_account, writable=True),
+        _meta(pool["pool_base_token_account"], writable=True),
+        _meta(pool["pool_quote_token_account"], writable=True),
+        _meta(fee_recipient),
+        _meta(quote_ata(fee_recipient), writable=True),
+        _meta(base_program),
+        _meta(quote_program),
+        _meta(SYSTEM_PROGRAM),
+        _meta(ASSOCIATED_TOKEN_PROGRAM),
+        _meta(PUMP_SWAP_EVENT_AUTHORITY),
+        _meta(PUMP_AMM_PROGRAM),
+        _meta(quote_ata(creator_vault), writable=True),
+        _meta(creator_vault),
     ]
-
-    instruction_data = (
-        PUMPSWAP_BUY_DISCRIMINATOR
-        + struct.pack("<Q", amount_out)
-        + struct.pack("<Q", max_sol_in)
-        + _TRACK_VOLUME
-    )
-
-    buy_ix = Instruction(
-        program_id=PUMP_AMM_PROGRAM,
-        accounts=buy_accounts,
-        data=instruction_data,
-    )
-
-    return [create_wsol_ata, transfer_ix, sync_ix, create_token_ata, buy_ix]
+    if is_buy:
+        accounts += [
+            _meta(derive_amm_global_volume_accumulator()),
+            _meta(user_volume_accumulator, writable=True),
+        ]
+    accounts += [_meta(derive_amm_fee_config()), _meta(PUMP_FEE_PROGRAM)]
+    if pool["is_cashback_coin"]:
+        accounts.append(_meta(quote_ata(user_volume_accumulator), writable=True))
+        if not is_buy:
+            accounts.append(_meta(user_volume_accumulator, writable=True))
+    if pool["is_canonical"]:
+        accounts.append(_meta(derive_amm_pool_v2(base_mint)))
+    accounts += [_meta(buyback_recipient), _meta(quote_ata(buyback_recipient), writable=True)]
+    return accounts
 
 
 def build_pumpswap_buy_exact_quote_in_instructions(
+    *,
     user: Pubkey,
     pool_address: Pubkey,
     pool: dict,
-    token_program_id: Pubkey,
+    tokens: dict,
     fee_recipient: Pubkey,
-    fee_recipient_ata: Pubkey,
+    buyback_recipient: Pubkey,
     spendable_quote_in: int,
     min_base_amount_out: int,
-    sol_wrap_lamports: int,
+    wsol_funding: int = 0,
 ) -> list[Instruction]:
-    """Build PumpSwap buy_exact_quote_in instructions (WSOL wrap + buy swap).
+    """Spend exactly `spendable_quote_in` raw quote units on a PumpSwap pool.
 
-    Same 5 instructions and 23 accounts as regular buy, but uses
-    buy_exact_quote_in discriminator with (spendable_quote_in, min_base_amount_out) args.
+    A SOL pool is paid from a throwaway WSOL account funded with `wsol_funding`
+    lamports and closed afterwards, so unspent SOL comes straight back.
     """
-    from solders.system_program import TransferParams, transfer
-    from spl.token.instructions import SyncNativeParams, sync_native
-
-    from pumpfun_cli.protocol.contracts import PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR
-
-    user_wsol_ata = get_associated_token_address(user, WSOL_MINT, TOKEN_PROGRAM)
-    user_token_ata = get_associated_token_address(user, pool["base_mint"], token_program_id)
-
-    coin_creator = pool["coin_creator"]
-    creator_vault_authority = derive_amm_creator_vault(coin_creator)
-    creator_vault_ata = get_associated_token_address(
-        creator_vault_authority, WSOL_MINT, TOKEN_PROGRAM
+    user_quote, open_ixs, close_ixs = quote_settlement_account(
+        user, pool["quote_mint"], tokens["quote_token_program"], funding=wsol_funding
     )
-
-    create_wsol_ata = create_idempotent_associated_token_account(
-        payer=user,
-        owner=user,
-        mint=WSOL_MINT,
-        token_program_id=TOKEN_PROGRAM,
+    create_base_ata = create_idempotent_associated_token_account(
+        user, user, pool["base_mint"], tokens["base_token_program"]
     )
-    transfer_ix = transfer(
-        TransferParams(
-            from_pubkey=user,
-            to_pubkey=user_wsol_ata,
-            lamports=sol_wrap_lamports,
-        )
+    accounts = _pumpswap_accounts(
+        user=user,
+        pool_address=pool_address,
+        pool=pool,
+        tokens=tokens,
+        user_quote_account=user_quote,
+        fee_recipient=fee_recipient,
+        buyback_recipient=buyback_recipient,
+        is_buy=True,
     )
-    sync_ix = sync_native(
-        SyncNativeParams(
-            program_id=TOKEN_PROGRAM,
-            account=user_wsol_ata,
-        )
-    )
-    create_token_ata = create_idempotent_associated_token_account(
-        payer=user,
-        owner=user,
-        mint=pool["base_mint"],
-        token_program_id=token_program_id,
-    )
-
-    pool_v2 = derive_amm_pool_v2(pool["base_mint"])
-
-    buy_accounts = [
-        AccountMeta(pubkey=pool_address, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool["base_mint"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=WSOL_MINT, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=user_token_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user_wsol_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool["pool_base_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool["pool_quote_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=fee_recipient_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=creator_vault_authority, is_signer=False, is_writable=False),
-        AccountMeta(
-            pubkey=derive_amm_global_volume_accumulator(), is_signer=False, is_writable=False
-        ),
-        AccountMeta(
-            pubkey=derive_amm_user_volume_accumulator(user), is_signer=False, is_writable=True
-        ),
-        AccountMeta(pubkey=derive_amm_fee_config(), is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool_v2, is_signer=False, is_writable=False),
-    ]
-
-    instruction_data = (
+    data = (
         PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR
-        + struct.pack("<Q", spendable_quote_in)
-        + struct.pack("<Q", min_base_amount_out)
+        + struct.pack("<QQ", spendable_quote_in, min_base_amount_out)
         + _TRACK_VOLUME
     )
+    swap = Instruction(PUMP_AMM_PROGRAM, data, accounts)
+    return [*open_ixs, create_base_ata, swap, *close_ixs]
 
-    buy_ix = Instruction(
-        program_id=PUMP_AMM_PROGRAM,
-        accounts=buy_accounts,
-        data=instruction_data,
+
+def build_pumpswap_sell_instructions(
+    *,
+    user: Pubkey,
+    pool_address: Pubkey,
+    pool: dict,
+    tokens: dict,
+    fee_recipient: Pubkey,
+    buyback_recipient: Pubkey,
+    token_amount: int,
+    min_quote_out: int,
+) -> list[Instruction]:
+    """Sell `token_amount` raw base tokens on a PumpSwap pool for at least `min_quote_out`."""
+    user_quote, open_ixs, close_ixs = quote_settlement_account(
+        user, pool["quote_mint"], tokens["quote_token_program"]
     )
-
-    return [create_wsol_ata, transfer_ix, sync_ix, create_token_ata, buy_ix]
+    accounts = _pumpswap_accounts(
+        user=user,
+        pool_address=pool_address,
+        pool=pool,
+        tokens=tokens,
+        user_quote_account=user_quote,
+        fee_recipient=fee_recipient,
+        buyback_recipient=buyback_recipient,
+        is_buy=False,
+    )
+    data = PUMPSWAP_SELL_DISCRIMINATOR + struct.pack("<QQ", token_amount, min_quote_out)
+    swap = Instruction(PUMP_AMM_PROGRAM, data, accounts)
+    return [*open_ixs, swap, *close_ixs]
 
 
 def build_init_amm_user_volume_accumulator(user: Pubkey) -> Instruction:
     """Build init_user_volume_accumulator instruction for PumpSwap AMM."""
-    INIT_DISCRIMINATOR = bytes([94, 6, 202, 115, 255, 96, 232, 183])
-    user_vol = derive_amm_user_volume_accumulator(user)
-    accounts = [
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=user_vol, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
-    ]
-    return Instruction(program_id=PUMP_AMM_PROGRAM, accounts=accounts, data=INIT_DISCRIMINATOR)
-
-
-def build_pumpswap_sell_instructions(
-    user: Pubkey,
-    pool_address: Pubkey,
-    pool: dict,
-    token_program_id: Pubkey,
-    fee_recipient: Pubkey,
-    fee_recipient_ata: Pubkey,
-    token_amount: int,
-    min_sol_out: int,
-) -> list[Instruction]:
-    """Build PumpSwap sell instructions (WSOL ATA + sell swap).
-
-    Returns 2 instructions:
-    1. Create WSOL ATA (idempotent) - needed to receive SOL
-    2. Sell instruction (21 IDL accounts + 1 trailing: pool_v2)
-    """
-    user_wsol_ata = get_associated_token_address(user, WSOL_MINT, TOKEN_PROGRAM)
-    user_token_ata = get_associated_token_address(user, pool["base_mint"], token_program_id)
-
-    coin_creator = pool["coin_creator"]
-    creator_vault_authority = derive_amm_creator_vault(coin_creator)
-    creator_vault_ata = get_associated_token_address(
-        creator_vault_authority, WSOL_MINT, TOKEN_PROGRAM
-    )
-
-    # 1. Create WSOL ATA
-    create_wsol_ata = create_idempotent_associated_token_account(
-        payer=user,
-        owner=user,
-        mint=WSOL_MINT,
-        token_program_id=TOKEN_PROGRAM,
-    )
-
-    # 2. Sell instruction (22 accounts: 17 IDL + 4 remaining + pool_v2 trailing)
-    pool_v2 = derive_amm_pool_v2(pool["base_mint"])
-
-    sell_accounts = [
-        AccountMeta(pubkey=pool_address, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool["base_mint"], is_signer=False, is_writable=False),
-        AccountMeta(pubkey=WSOL_MINT, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=user_token_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user_wsol_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool["pool_base_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool["pool_quote_token_account"], is_signer=False, is_writable=True),
-        AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=fee_recipient_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=creator_vault_authority, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=derive_amm_fee_config(), is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool_v2, is_signer=False, is_writable=False),
-    ]
-
-    instruction_data = (
-        PUMPSWAP_SELL_DISCRIMINATOR
-        + struct.pack("<Q", token_amount)
-        + struct.pack("<Q", min_sol_out)
-        # No track_volume arg — PumpSwap sell IDL only takes (base_amount_in, min_quote_amount_out)
-    )
-
-    sell_ix = Instruction(
-        program_id=PUMP_AMM_PROGRAM,
-        accounts=sell_accounts,
-        data=instruction_data,
-    )
-
-    return [create_wsol_ata, sell_ix]
-
-
-# --- Bonding curve extras & migration instruction builders ---
-
-
-def build_claim_cashback_instruction(
-    idl: IDLParser,
-    user: Pubkey,
-) -> Instruction:
-    """Build claim_cashback instruction — claims volume-based cashback rewards."""
-    from pumpfun_cli.protocol.address import find_user_volume_accumulator
-
-    accounts = [
-        AccountMeta(pubkey=user, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=find_user_volume_accumulator(user), is_signer=False, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-    ]
-
-    discriminators = idl.get_instruction_discriminators()
     return Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=accounts,
-        data=discriminators["claim_cashback"],
-    )
-
-
-def build_close_volume_accumulator_instruction(
-    idl: IDLParser,
-    user: Pubkey,
-) -> Instruction:
-    """Build close_user_volume_accumulator instruction — recovers rent."""
-    from pumpfun_cli.protocol.address import find_user_volume_accumulator
-
-    accounts = [
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=find_user_volume_accumulator(user), is_signer=False, is_writable=True),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-    ]
-
-    discriminators = idl.get_instruction_discriminators()
-    return Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=accounts,
-        data=discriminators["close_user_volume_accumulator"],
-    )
-
-
-def build_migrate_instruction(
-    idl: IDLParser,
-    mint: Pubkey,
-    user: Pubkey,
-    withdraw_authority: Pubkey,
-) -> Instruction:
-    """Build migrate instruction — triggers graduation from bonding curve to PumpSwap AMM.
-
-    Requires 24 accounts. The withdraw_authority must be read from the Global account on-chain.
-    """
-    from pumpfun_cli.protocol.address import (
-        derive_associated_bonding_curve,
-        derive_bonding_curve,
-        derive_pool_authority,
-    )
-
-    bonding_curve = derive_bonding_curve(mint)
-    assoc_bc = derive_associated_bonding_curve(mint, bonding_curve, TOKEN_2022_PROGRAM)
-    pool_authority = derive_pool_authority(mint)
-
-    # Derive pool PDA on AMM program: seeds = [b"pool", [0,0], pool_authority, mint, wsol_mint]
-    pool, _ = Pubkey.find_program_address(
-        [b"pool", bytes([0, 0]), bytes(pool_authority), bytes(mint), bytes(WSOL_MINT)],
         PUMP_AMM_PROGRAM,
-    )
-
-    # LP mint PDA on AMM program: seeds = [b"pool_lp_mint", pool]
-    lp_mint, _ = Pubkey.find_program_address([b"pool_lp_mint", bytes(pool)], PUMP_AMM_PROGRAM)
-
-    # ATAs
-    pool_authority_mint_account = get_associated_token_address(
-        pool_authority,
-        mint,
-        TOKEN_2022_PROGRAM,
-    )
-    pool_authority_wsol_account = get_associated_token_address(
-        pool_authority,
-        WSOL_MINT,
-        TOKEN_PROGRAM,
-    )
-    user_pool_token_account = get_associated_token_address(
-        pool_authority,
-        lp_mint,
-        TOKEN_2022_PROGRAM,
-    )
-    pool_base_token_account = get_associated_token_address(
-        pool,
-        mint,
-        TOKEN_2022_PROGRAM,
-    )
-    pool_quote_token_account = get_associated_token_address(
-        pool,
-        WSOL_MINT,
-        TOKEN_PROGRAM,
-    )
-
-    accounts = [
-        AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=withdraw_authority, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=assoc_bc, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=pool, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool_authority, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool_authority_mint_account, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool_authority_wsol_account, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=WSOL_MINT, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=lp_mint, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user_pool_token_account, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool_base_token_account, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=pool_quote_token_account, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-    ]
-
-    discriminators = idl.get_instruction_discriminators()
-    return Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=accounts,
-        data=discriminators["migrate"],
+        PUMPSWAP_INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR,
+        [
+            _meta(user, writable=True, signer=True),
+            _meta(user),
+            _meta(derive_amm_user_volume_accumulator(user), writable=True),
+            _meta(SYSTEM_PROGRAM),
+            _meta(PUMP_SWAP_EVENT_AUTHORITY),
+            _meta(PUMP_AMM_PROGRAM),
+        ],
     )
 
 
-def build_collect_creator_fee_instruction(
-    idl: "IDLParser",
-    creator: Pubkey,
+# --- Payouts, cleanup and migration ---
+
+
+def build_claim_cashback_v2_instruction(
+    *, user: Pubkey, quote_mint: Pubkey = WSOL_MINT, quote_token_program: Pubkey = TOKEN_PROGRAM
 ) -> Instruction:
-    """Build collect_creator_fee instruction — collects fees from pump.fun creator vault."""
-    from pumpfun_cli.protocol.address import derive_creator_vault
-    from pumpfun_cli.protocol.contracts import COLLECT_CREATOR_FEE_DISCRIMINATOR
-
-    accounts = [
-        AccountMeta(pubkey=creator, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=derive_creator_vault(creator), is_signer=False, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-    ]
-
+    """Pay out the cashback accrued on the user's volume accumulator in one quote asset."""
+    accumulator = find_user_volume_accumulator(user)
     return Instruction(
-        program_id=PUMP_PROGRAM,
-        accounts=accounts,
-        data=COLLECT_CREATOR_FEE_DISCRIMINATOR,
+        PUMP_PROGRAM,
+        CLAIM_CASHBACK_V2_DISCRIMINATOR,
+        [
+            _meta(user, writable=True),
+            _meta(accumulator, writable=True),
+            _meta(quote_mint),
+            _meta(quote_token_program),
+            _meta(ASSOCIATED_TOKEN_PROGRAM),
+            _meta(find_ata(accumulator, quote_mint, quote_token_program), writable=True),
+            _meta(find_ata(user, quote_mint, quote_token_program), writable=True),
+            _meta(SYSTEM_PROGRAM),
+            _meta(PUMP_EVENT_AUTHORITY),
+            _meta(PUMP_PROGRAM),
+        ],
+    )
+
+
+def build_close_volume_accumulator_instruction(user: Pubkey) -> Instruction:
+    """Build close_user_volume_accumulator instruction — recovers rent."""
+    return Instruction(
+        PUMP_PROGRAM,
+        CLOSE_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR,
+        [
+            _meta(user, writable=True, signer=True),
+            _meta(find_user_volume_accumulator(user), writable=True),
+            _meta(PUMP_EVENT_AUTHORITY),
+            _meta(PUMP_PROGRAM),
+        ],
+    )
+
+
+def build_collect_creator_fee_v2_instruction(
+    *,
+    creator: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+) -> Instruction:
+    """Sweep a creator's pump.fun vault for one quote asset into the creator's wallet."""
+    vault = derive_creator_vault(creator)
+    return Instruction(
+        PUMP_PROGRAM,
+        COLLECT_CREATOR_FEE_V2_DISCRIMINATOR,
+        [
+            _meta(creator, writable=True),
+            _meta(find_ata(creator, quote_mint, quote_token_program), writable=True),
+            _meta(vault, writable=True),
+            _meta(find_ata(vault, quote_mint, quote_token_program), writable=True),
+            _meta(quote_mint),
+            _meta(quote_token_program),
+            _meta(ASSOCIATED_TOKEN_PROGRAM),
+            _meta(SYSTEM_PROGRAM),
+            _meta(PUMP_EVENT_AUTHORITY),
+            _meta(PUMP_PROGRAM),
+        ],
     )
 
 
 def build_collect_coin_creator_fee_instruction(
+    *,
     creator: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
 ) -> Instruction:
-    """Build collect_coin_creator_fee instruction — collects fees from PumpSwap creator vault."""
-    from pumpfun_cli.protocol.address import derive_amm_creator_vault
-    from pumpfun_cli.protocol.contracts import (
-        COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR,
-        WSOL_MINT,
-    )
-
-    creator_vault_authority = derive_amm_creator_vault(creator)
-    creator_vault_ata = get_associated_token_address(
-        creator_vault_authority, WSOL_MINT, TOKEN_PROGRAM
-    )
-    creator_wsol_ata = get_associated_token_address(creator, WSOL_MINT, TOKEN_PROGRAM)
-
-    accounts = [
-        AccountMeta(pubkey=WSOL_MINT, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator_vault_authority, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=creator_wsol_ata, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
-    ]
-
+    """Sweep a creator's PumpSwap vault for one quote asset into the creator's token account."""
+    vault_authority = derive_amm_creator_vault(creator)
     return Instruction(
-        program_id=PUMP_AMM_PROGRAM,
-        accounts=accounts,
-        data=COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR,
+        PUMP_AMM_PROGRAM,
+        COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR,
+        [
+            _meta(quote_mint),
+            _meta(quote_token_program),
+            _meta(creator),
+            _meta(vault_authority),
+            _meta(find_ata(vault_authority, quote_mint, quote_token_program), writable=True),
+            _meta(find_ata(creator, quote_mint, quote_token_program), writable=True),
+            _meta(PUMP_SWAP_EVENT_AUTHORITY),
+            _meta(PUMP_AMM_PROGRAM),
+        ],
+    )
+
+
+def build_migrate_v2_instruction(
+    *,
+    mint: Pubkey,
+    user: Pubkey,
+    withdraw_authority: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    base_token_program: Pubkey = TOKEN_2022_PROGRAM,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+) -> Instruction:
+    """Move a complete curve's liquidity into its canonical PumpSwap pool.
+
+    `withdraw_authority` is read from pump.fun's Global account.
+    """
+    bonding_curve = derive_bonding_curve(mint)
+    pool_authority = derive_pool_authority(mint)
+    pool = derive_amm_pool(mint, quote_mint)
+    lp_mint = derive_amm_lp_mint(pool)
+    return Instruction(
+        PUMP_PROGRAM,
+        MIGRATE_V2_DISCRIMINATOR,
+        [
+            _meta(PUMP_GLOBAL),
+            _meta(withdraw_authority, writable=True),
+            _meta(mint),
+            _meta(quote_mint),
+            _meta(bonding_curve, writable=True),
+            _meta(find_ata(bonding_curve, mint, base_token_program), writable=True),
+            _meta(find_ata(bonding_curve, quote_mint, quote_token_program), writable=True),
+            _meta(user, writable=True, signer=True),
+            _meta(SYSTEM_PROGRAM),
+            _meta(PUMP_AMM_PROGRAM),
+            _meta(pool, writable=True),
+            _meta(pool_authority, writable=True),
+            _meta(find_ata(pool_authority, mint, base_token_program), writable=True),
+            _meta(find_ata(pool_authority, quote_mint, quote_token_program), writable=True),
+            _meta(PUMP_SWAP_GLOBAL_CONFIG),
+            _meta(lp_mint, writable=True),
+            _meta(find_ata(pool_authority, lp_mint, TOKEN_2022_PROGRAM), writable=True),
+            _meta(find_ata(pool, mint, base_token_program), writable=True),
+            _meta(find_ata(pool, quote_mint, quote_token_program), writable=True),
+            _meta(base_token_program),
+            _meta(quote_token_program),
+            _meta(TOKEN_2022_PROGRAM),
+            _meta(ASSOCIATED_TOKEN_PROGRAM),
+            _meta(PUMP_SWAP_EVENT_AUTHORITY),
+            _meta(RENT),
+            _meta(PUMP_EVENT_AUTHORITY),
+            _meta(PUMP_PROGRAM),
+        ],
     )
