@@ -142,6 +142,11 @@ async def buy_token(
             return {"error": "not_found", "message": f"No bonding curve for {mint_str}"}
         if state["complete"]:
             return {"error": "graduated", "message": "Token has graduated to PumpSwap."}
+        if state["creator"] is None:
+            return {
+                "error": "legacy_curve",
+                "message": "This coin's bonding curve predates the creator field and cannot be traded.",
+            }
 
         quote_mint = state["quote_mint"]
         symbol = quote_symbol(quote_mint)
@@ -280,6 +285,11 @@ async def sell_token(
             return {"error": "not_found", "message": f"No bonding curve for {mint_str}"}
         if state["complete"]:
             return {"error": "graduated", "message": "Token has graduated to PumpSwap."}
+        if state["creator"] is None:
+            return {
+                "error": "legacy_curve",
+                "message": "This coin's bonding curve predates the creator field and cannot be traded.",
+            }
 
         quote_mint = state["quote_mint"]
         symbol = quote_symbol(quote_mint)

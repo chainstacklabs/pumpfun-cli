@@ -357,3 +357,12 @@ async def test_collect_ignores_the_vaults_rent_floor(tmp_keystore):
         result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
     assert result["error"] == "no_fees"
     assert client.sent == []
+
+
+@pytest.mark.parametrize("fn,arg", [(buy_token, 0.01), (sell_token, "all")])
+async def test_legacy_curve_without_creator_is_refused(tmp_keystore, fn, arg):
+    client = chain_with_coin(curve=build_curve_data(length=49))
+    with _patched(client):
+        result = await fn("http://rpc", tmp_keystore, "testpass", MINT_STR, arg)
+    assert result["error"] == "legacy_curve"
+    assert client.sent == []

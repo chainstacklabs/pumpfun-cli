@@ -43,7 +43,7 @@ def info(
             typer.echo(f"Quote reserves:   {result['real_quote_reserves']:.4f} {symbol}")
         if result.get("pumpswap_warning"):
             typer.echo(f"Warning:          {result['pumpswap_warning']}")
-        typer.echo(f"Creator:          {result['creator']}")
+        typer.echo(f"Creator:          {result['creator'] or '\u2014'}")
         if result["is_mayhem_mode"]:
             typer.echo("Mayhem mode:      Yes")
         if result["is_cashback_coin"]:

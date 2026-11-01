@@ -1,224 +1,250 @@
+"""Token discovery: the endpoints used, the pump.fun-only filter, and chain enrichment."""
+
+from unittest.mock import patch
+
 import httpx
 import pytest
-import respx
+from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.tokens import (
+    PUMP_API,
+    SOLANA_CHAIN_ID,
+    TokenApiError,
+    enrich_from_chain,
     get_graduating_tokens,
+    get_new_tokens,
     get_recommended_tokens,
     get_trending_tokens,
     search_tokens,
 )
+from pumpfun_cli.protocol.address import derive_bonding_curve
+from pumpfun_cli.protocol.contracts import USDC_MINT
+from tests.test_core.helpers import FakeClient, build_curve_data, build_global_data
 
-PUMP_API = "https://frontend-api-v3.pump.fun"
+PUMP_GLOBAL_DATA = build_global_data()
 
-MOCK_RECOMMENDED = [
-    {
-        "name": "TestToken",
-        "symbol": "TEST",
-        "mint": "abc123",
-        "usd_market_cap": 100000,
-        "created_timestamp": 1000,
+
+def _row(
+    symbol: str,
+    *,
+    program: str | None = "pump",
+    chain: str = SOLANA_CHAIN_ID,
+    quote: str | None = None,
+    mint: str | None = None,
+) -> dict:
+    return {
+        "mint": mint or str(Pubkey.new_unique()),
+        "name": symbol.title(),
+        "symbol": symbol,
+        "chain_id": chain,
+        "program": program,
+        "quote_mint": quote,
+        "usd_market_cap": 1234.5,
         "complete": False,
-        "real_sol_reserves": 50_000_000_000,
-        "virtual_sol_reserves": 30_000_000_000,
-        "virtual_token_reserves": 1_000_000_000_000,
-        "description": "A test token",
-    },
-    {
-        "name": "Another",
-        "symbol": "ANO",
-        "mint": "def456",
-        "usd_market_cap": 50000,
-        "created_timestamp": 2000,
-        "complete": False,
-        "real_sol_reserves": 10_000_000_000,
-        "virtual_sol_reserves": 10_000_000_000,
-        "virtual_token_reserves": 500_000_000_000,
-        "description": "Another token",
-    },
-]
+        "created_timestamp": 1,
+        "last_trade_timestamp": 2,
+        "mayhem": None,
+        "is_cashback_enabled": False,
+        "is_holder_reward": True,
+    }
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_get_recommended():
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=MOCK_RECOMMENDED)
+OTHER_LAUNCHPAD = _row("MDBC", program="meteora_dbc")
+EVM = _row("EVM", program=None, chain="eip155:56")
+
+
+@pytest.mark.parametrize(
+    "fn,board",
+    [
+        (get_trending_tokens, "movers"),
+        (get_new_tokens, "new"),
+        (get_graduating_tokens, "graduating"),
+    ],
+)
+async def test_boards_keep_only_pump_coins(respx_mock, fn, board):
+    route = respx_mock.get(f"{PUMP_API}/coins/boards/{board}").mock(
+        return_value=httpx.Response(
+            200, json={"coins": [OTHER_LAUNCHPAD, _row("ONE"), EVM, _row("TWO")]}
+        )
     )
-    tokens = await get_recommended_tokens(limit=10)
-    assert len(tokens) == 2
-    assert tokens[0]["symbol"] == "TEST"
-    assert "price_sol" in tokens[0]
-    assert "bonding_progress" in tokens[0]
+    tokens = await fn(limit=5)
+    assert [t["symbol"] for t in tokens] == ["ONE", "TWO"]
+    assert route.call_count == 1  # a short page is the end of the board
+    assert route.calls.last.request.headers["user-agent"].startswith("pumpfun-cli")
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_search_filters_by_name():
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=MOCK_RECOMMENDED)
+async def test_board_pages_until_the_limit(respx_mock):
+    edge = str(Pubkey.new_unique())
+    first = [_row(f"A{i}") for i in range(3)] + [EVM] * 146 + [_row("EDGE", mint=edge)]
+    second = [_row("EDGE", mint=edge)] + [_row(f"B{i}") for i in range(5)]
+    route = respx_mock.get(f"{PUMP_API}/coins/boards/new").mock(
+        side_effect=[
+            httpx.Response(200, json={"coins": first}),
+            httpx.Response(200, json={"coins": second}),
+        ]
     )
-    results = await search_tokens("test", limit=10)
-    assert len(results) == 1
-    assert results[0]["name"] == "TestToken"
+    tokens = await get_new_tokens(limit=6)
+    assert [t["symbol"] for t in tokens] == ["A0", "A1", "A2", "EDGE", "B0", "B1"]
+    assert route.calls[1].request.url.params["offset"] == "149"
+    assert route.call_count == 2
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_enriched_tokens_have_price_and_progress():
-    """Tokens with reserve fields should have price_sol (float > 0) and bonding_progress (0-100)."""
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=MOCK_RECOMMENDED)
+async def test_board_stops_on_an_empty_page(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/graduating").mock(
+        return_value=httpx.Response(200, json={"coins": []})
     )
-    tokens = await get_recommended_tokens(limit=10)
-    for t in tokens:
-        assert isinstance(t["price_sol"], float)
-        assert t["price_sol"] > 0
-        assert isinstance(t["bonding_progress"], float)
-        assert 0 <= t["bonding_progress"] <= 100
+    assert await get_graduating_tokens(limit=5) == []
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_enriched_tokens_missing_reserves_fields():
-    """Tokens missing reserve fields should have price_sol and bonding_progress as None."""
-    bare_token = [
-        {
-            "name": "Bare",
-            "symbol": "BARE",
-            "mint": "bare111",
-            "complete": False,
-            "description": "no reserves",
-        }
+async def test_recommendations_are_capped_at_ten(respx_mock):
+    route = respx_mock.get(f"{PUMP_API}/coins/recommendations").mock(
+        return_value=httpx.Response(200, json=[_row("REC")])
+    )
+    await get_recommended_tokens(limit=50)
+    params = route.calls.last.request.url.params
+    assert params["surface"] == "search_entry" and params["limit"] == "10"
+
+
+async def test_search_is_server_side(respx_mock):
+    route = respx_mock.get(f"{PUMP_API}/coins/search-unrestricted").mock(
+        return_value=httpx.Response(200, json=[EVM, _row("PEPE"), OTHER_LAUNCHPAD])
+    )
+    tokens = await search_tokens("pepe", limit=5)
+    assert [t["symbol"] for t in tokens] == ["PEPE"]
+    assert route.calls.last.request.url.params["searchTerm"] == "pepe"
+
+
+async def test_summary_names_the_quote_asset(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/new").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "coins": [
+                    _row("SOLCOIN", quote="11111111111111111111111111111111"),
+                    _row("OLD", quote=None),
+                    _row("USD", quote=str(USDC_MINT)),
+                ]
+            },
+        )
+    )
+    tokens = await get_new_tokens(limit=3)
+    assert [t["quote_symbol"] for t in tokens] == ["SOL", "SOL", "USDC"]
+    assert tokens[0]["is_holder_reward"] is True
+    assert set(tokens[0]) >= {"mint", "name", "symbol", "usd_market_cap", "complete"}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(404, json={"message": "gone"}), httpx.Response(403, text="cf")],
+)
+async def test_api_failures_raise_a_clean_error(respx_mock, response):
+    respx_mock.get(f"{PUMP_API}/coins/boards/movers").mock(return_value=response)
+    with pytest.raises(TokenApiError, match=str(response.status_code)):
+        await get_trending_tokens()
+
+
+async def test_transport_failure_raises_a_clean_error(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/movers").mock(side_effect=httpx.ConnectTimeout("x"))
+    with pytest.raises(TokenApiError, match="ConnectTimeout"):
+        await get_trending_tokens()
+
+
+async def test_enrich_reads_price_and_progress_from_the_curves():
+    from pumpfun_cli.protocol.contracts import PUMP_GLOBAL
+
+    sol_coin, usdc_coin, missing, done = (Pubkey.new_unique() for _ in range(4))
+    client = FakeClient()
+    client.add(PUMP_GLOBAL, PUMP_GLOBAL_DATA)
+    client.add(derive_bonding_curve(sol_coin), build_curve_data(real_token=693_100_000_000_000))
+    client.add(
+        derive_bonding_curve(usdc_coin),
+        build_curve_data(quote_mint=USDC_MINT, virtual_quote=5_000_000_000),
+    )
+    client.add(derive_bonding_curve(done), build_curve_data(complete=True, length=49))
+    tokens = [
+        {"mint": str(m), "quote_symbol": "SOL"} for m in (sol_coin, usdc_coin, missing, done)
     ]
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=bare_token)
+    with patch("pumpfun_cli.core.tokens.RpcClient", return_value=client):
+        enriched = await enrich_from_chain(tokens, "http://rpc")
+    sol, usdc, gone, graduated = enriched
+    assert sol["price"] == pytest.approx(3e-8)
+    assert sol["bonding_progress"] == pytest.approx(12.6, abs=0.1)
+    assert usdc["quote_symbol"] == "USDC" and usdc["price"] == pytest.approx(5e-6)
+    assert "price" not in gone
+    assert graduated["price"] is None and graduated["bonding_progress"] == 100.0
+
+
+async def test_error_carries_pump_funs_own_message(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/movers").mock(
+        return_value=httpx.Response(400, json={"message": ["board must be one of: new"]})
     )
-    tokens = await get_recommended_tokens(limit=10)
-    assert tokens[0]["price_sol"] is None
-    assert tokens[0]["bonding_progress"] is None
+    with pytest.raises(TokenApiError, match="400.*board must be one of: new"):
+        await get_trending_tokens()
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_enriched_tokens_zero_token_reserves():
-    """Token with virtual_token_reserves: 0 should have price_sol == 0.0."""
-    zero_token = [
-        {
-            "name": "Zero",
-            "symbol": "ZERO",
-            "mint": "zero111",
-            "complete": False,
-            "virtual_sol_reserves": 10_000_000_000,
-            "virtual_token_reserves": 0,
-            "real_sol_reserves": 5_000_000_000,
-            "description": "zero reserves",
-        }
-    ]
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=zero_token)
+async def test_html_error_page_adds_nothing(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/movers").mock(
+        return_value=httpx.Response(403, text="<!DOCTYPE html><html>challenge</html>")
     )
-    tokens = await get_recommended_tokens(limit=10)
-    assert tokens[0]["price_sol"] == 0.0
-    assert isinstance(tokens[0]["bonding_progress"], float)
+    with pytest.raises(TokenApiError) as info:
+        await get_trending_tokens()
+    assert "DOCTYPE" not in str(info.value)
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_graduating_filters_pump_swap_pool():
-    """Tokens with pump_swap_pool set should be excluded from graduating list."""
-    tokens_data = [
-        {
-            "name": "Normal",
-            "symbol": "NRM",
-            "mint": "nrm111",
-            "complete": False,
-            "real_sol_reserves": 50_000_000_000,
-            "virtual_sol_reserves": 30_000_000_000,
-            "virtual_token_reserves": 1_000_000_000_000,
-        },
-        {
-            "name": "Swapped",
-            "symbol": "SWP",
-            "mint": "swp111",
-            "complete": False,
-            "real_sol_reserves": 70_000_000_000,
-            "virtual_sol_reserves": 40_000_000_000,
-            "virtual_token_reserves": 800_000_000_000,
-            "pump_swap_pool": "somePoolAddress",
-        },
-        {
-            "name": "Completed",
-            "symbol": "CMP",
-            "mint": "cmp111",
-            "complete": True,
-            "real_sol_reserves": 85_000_000_000,
-            "virtual_sol_reserves": 50_000_000_000,
-            "virtual_token_reserves": 500_000_000_000,
-        },
-    ]
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=tokens_data)
+async def test_non_json_success_is_a_clean_error(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/search-unrestricted").mock(
+        return_value=httpx.Response(200, text="<html>challenge</html>")
     )
-    result = await get_graduating_tokens(limit=20)
-    assert len(result) == 1
-    assert result[0]["symbol"] == "NRM"
+    with pytest.raises(TokenApiError, match="non-JSON"):
+        await search_tokens("pepe")
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_graduating_keeps_tokens_without_pool():
-    """Tokens without pump_swap_pool and complete=False should all be included."""
-    tokens_data = [
-        {
-            "name": "A",
-            "symbol": "AAA",
-            "mint": "aaa111",
-            "complete": False,
-            "real_sol_reserves": 50_000_000_000,
-            "virtual_sol_reserves": 30_000_000_000,
-            "virtual_token_reserves": 1_000_000_000_000,
-        },
-        {
-            "name": "B",
-            "symbol": "BBB",
-            "mint": "bbb111",
-            "complete": False,
-            "real_sol_reserves": 40_000_000_000,
-            "virtual_sol_reserves": 20_000_000_000,
-            "virtual_token_reserves": 900_000_000_000,
-        },
-    ]
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=tokens_data)
+@pytest.mark.parametrize("body", [{"coins": "nope"}, {"other": []}, ["not", "a", "board"]])
+async def test_unexpected_board_shape_is_a_clean_error(respx_mock, body):
+    respx_mock.get(f"{PUMP_API}/coins/boards/new").mock(
+        return_value=httpx.Response(200, json=body)
     )
-    result = await get_graduating_tokens(limit=20)
-    assert len(result) == 2
+    with pytest.raises(TokenApiError, match="unexpected shape"):
+        await get_new_tokens()
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_trending_tokens_enriched():
-    """Trending results should include price_sol and bonding_progress."""
-    runners = [{"coin": MOCK_RECOMMENDED[0]}]
-    respx.get(f"{PUMP_API}/coins/top-runners").mock(return_value=httpx.Response(200, json=runners))
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=MOCK_RECOMMENDED)
+async def test_unexpected_search_shape_is_a_clean_error(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/recommendations").mock(
+        return_value=httpx.Response(200, json={"coins": []})
     )
-    tokens = await get_trending_tokens(limit=5)
-    for t in tokens:
-        assert "price_sol" in t
-        assert "bonding_progress" in t
+    with pytest.raises(TokenApiError, match="unexpected shape"):
+        await get_recommended_tokens()
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_search_tokens_enriched():
-    """Search results should include price_sol and bonding_progress."""
-    respx.get(f"{PUMP_API}/coins/recommended").mock(
-        return_value=httpx.Response(200, json=MOCK_RECOMMENDED)
+async def test_malformed_rows_are_skipped_not_fatal(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/search-unrestricted").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                "a string",
+                _row("BADQUOTE", quote="not-a-pubkey"),
+                _row("BADMINT", mint="nope"),
+                _row("GOOD"),
+            ],
+        )
     )
-    results = await search_tokens("test", limit=10)
-    assert len(results) == 1
-    assert "price_sol" in results[0]
-    assert "bonding_progress" in results[0]
+    assert [t["symbol"] for t in await search_tokens("x")] == ["GOOD"]
+
+
+async def test_rpc_failure_during_enrichment_is_a_runtime_error_without_the_url():
+    from unittest.mock import AsyncMock
+
+    from solana.exceptions import SolanaRpcException
+
+    client = FakeClient()
+    client.get_account_info = AsyncMock(
+        side_effect=SolanaRpcException(
+            TimeoutError("https://rpc.test/secret-api-key timed out"), lambda: None, None, object()
+        )
+    )
+    with (
+        patch("pumpfun_cli.core.tokens.RpcClient", return_value=client),
+        pytest.raises(RuntimeError) as info,
+    ):
+        await enrich_from_chain([{"mint": str(Pubkey.new_unique())}], "https://rpc.test")
+    assert "secret-api-key" not in str(info.value)

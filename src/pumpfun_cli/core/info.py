@@ -41,7 +41,7 @@ async def get_token_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30.0)
             "real_quote_reserves": state["real_quote_reserves"] / 10**quote_decimals,
             "virtual_quote_reserves": state["virtual_quote_reserves"] / 10**quote_decimals,
             "virtual_token_reserves": state["virtual_token_reserves"],
-            "creator": str(state["creator"]),
+            "creator": str(state["creator"]) if state["creator"] else None,
             "is_mayhem_mode": state["is_mayhem_mode"],
             "is_cashback_coin": state["is_cashback_coin"],
             "is_holder_reward": bool(state["is_holder_reward"]),

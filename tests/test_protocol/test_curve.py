@@ -38,11 +38,6 @@ def test_short_curve_reports_new_fields_as_absent():
     assert state["is_holder_reward"] is None
 
 
-def test_curve_without_flags_is_refused():
-    with pytest.raises(ValueError):
-        parse_bonding_curve(build_curve_data(length=82))
-
-
 def test_wrong_discriminator_is_refused():
     data = bytearray(build_curve_data())
     data[0] ^= 0xFF
@@ -53,3 +48,16 @@ def test_wrong_discriminator_is_refused():
 def test_holder_reward_curve_creator_is_read_as_stored():
     pda = Pubkey.new_unique()
     assert parse_bonding_curve(build_curve_data(creator=pda))["creator"] == pda
+
+
+def test_original_49_byte_curve_decodes_with_absent_fields():
+    state = parse_bonding_curve(build_curve_data(complete=True, length=49))
+    assert state["complete"] is True
+    assert state["creator"] is None
+    assert state["is_mayhem_mode"] is False and state["is_cashback_coin"] is False
+    assert state["quote_mint"] == WSOL_MINT
+
+
+def test_curve_shorter_than_its_reserves_is_refused():
+    with pytest.raises(ValueError):
+        parse_bonding_curve(build_curve_data(length=48))
