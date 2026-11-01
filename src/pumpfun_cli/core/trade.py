@@ -538,10 +538,12 @@ async def collect_creator_fees(
         _, quote_decimals = await get_mint_info(client, quote_mint)
         instructions = []
 
-        # pump.fun: a SOL vault holds lamports itself; any other quote sits in the vault's ATA.
+        # pump.fun: a SOL vault holds lamports itself, and keeps its rent-exempt
+        # minimum; any other quote sits in the vault's ATA.
         vault = derive_creator_vault(creator)
         if is_sol(quote_mint):
-            pump_balance = await client.get_balance(vault)
+            rent_floor = await client.get_minimum_balance_for_rent_exemption(0)
+            pump_balance = max(0, await client.get_balance(vault) - rent_floor)
         else:
             pump_balance = await client.get_token_account_balance(
                 find_ata(vault, quote_mint, quote_program)

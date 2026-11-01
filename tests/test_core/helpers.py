@@ -198,6 +198,9 @@ class FakeClient:
     async def get_balance(self, pubkey: Pubkey, commitment=None) -> int:
         return self.balances.get(pubkey, self.default_balance)
 
+    async def get_minimum_balance_for_rent_exemption(self, size: int) -> int:
+        return 650_240 if size == 0 else (128 + size) * 5_080
+
     async def get_token_account_balance(self, account: Pubkey) -> int:
         return self.token_balances.get(account, 0)
 

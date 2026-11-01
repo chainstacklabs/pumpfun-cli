@@ -317,7 +317,7 @@ async def test_collect_creator_fees_nothing_accrued(tmp_keystore):
 async def test_collect_creator_fees_from_both_venues(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = FakeClient()
-    client.balances[derive_creator_vault(user)] = 2_000_000_000
+    client.balances[derive_creator_vault(user)] = 2_000_650_240
     client.token_balances[find_ata(derive_amm_creator_vault(user), WSOL_MINT, TOKEN_PROGRAM)] = (
         500_000_000
     )
@@ -346,3 +346,14 @@ async def test_migrate_complete_curve_uses_global_withdraw_authority(tmp_keystor
     assert bytes(ix.data) == MIGRATE_V2_DISCRIMINATOR
     assert ix.accounts[1].pubkey == GLOBAL_DEFAULTS["withdraw_authority"]
     assert ix.accounts[10].pubkey == derive_amm_pool(COIN, WSOL_MINT)
+
+
+async def test_collect_ignores_the_vaults_rent_floor(tmp_keystore):
+    """A SOL creator vault keeps its rent-exempt minimum; that is not a fee to collect."""
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    assert result["error"] == "no_fees"
+    assert client.sent == []

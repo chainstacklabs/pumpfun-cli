@@ -121,6 +121,10 @@ class RpcClient:
         resp = await self.rpc.get_balance(pubkey, **kwargs)
         return resp.value
 
+    async def get_minimum_balance_for_rent_exemption(self, size: int) -> int:
+        resp = await self.rpc.get_minimum_balance_for_rent_exemption(size)
+        return resp.value
+
     async def get_token_account_balance(self, token_account: Pubkey) -> int:
         try:
             resp = await self.rpc.get_token_account_balance(token_account)
