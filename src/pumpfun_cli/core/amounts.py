@@ -11,3 +11,12 @@ def to_raw(amount: float | str, decimals: int) -> int:
     """
     scaled = Decimal(str(amount)) * (Decimal(10) ** decimals)
     return int(scaled.to_integral_value(ROUND_DOWN))
+
+
+def amount_fields(name: str, raw: int, decimals: int) -> dict:
+    """An amount for output: `name` in whole units for reading, `name_raw` exact.
+
+    The float can lose precision on large raw counts; `name_raw` is what was
+    actually used on chain.
+    """
+    return {name: raw / 10**decimals, f"{name}_raw": raw}

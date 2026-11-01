@@ -10,7 +10,7 @@ from pathlib import Path
 from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
-from pumpfun_cli.core.amounts import to_raw
+from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
@@ -201,12 +201,12 @@ async def buy_token(
                 "mint": mint_str,
                 "quote_mint": str(quote_mint),
                 "quote_symbol": symbol,
-                "quote_in": amount,
-                "expected_tokens": expected_tokens,
+                **amount_fields("quote_in", amount_raw, quote_decimals),
+                **amount_fields("expected_tokens", tokens_out, TOKEN_DECIMALS),
                 "effective_price": effective_price,
                 "spot_price": spot_price,
                 "price_impact_pct": round(price_impact, 4),
-                "min_tokens_out": min_tokens_out / 10**TOKEN_DECIMALS,
+                **amount_fields("min_tokens_out", min_tokens_out, TOKEN_DECIMALS),
                 "slippage_pct": slippage,
             }
             if shortfall:
@@ -254,8 +254,8 @@ async def buy_token(
             mint=mint_str,
             quote_mint=str(quote_mint),
             quote_symbol=symbol,
-            quote_spent=amount,
-            tokens_received=tokens_out / 10**TOKEN_DECIMALS,
+            **amount_fields("quote_spent", amount_raw, quote_decimals),
+            **amount_fields("tokens_received", tokens_out, TOKEN_DECIMALS),
         )
     finally:
         await client.close()
@@ -336,12 +336,12 @@ async def sell_token(
                 "mint": mint_str,
                 "quote_mint": str(quote_mint),
                 "quote_symbol": symbol,
-                "tokens_in": tokens_human,
-                "expected_quote": quote_out_human,
+                **amount_fields("tokens_in", token_amount, TOKEN_DECIMALS),
+                **amount_fields("expected_quote", quote_out, quote_decimals),
                 "effective_price": effective_price,
                 "spot_price": spot_price,
                 "price_impact_pct": round(price_impact, 4),
-                "min_quote_out": min_quote_out / 10**quote_decimals,
+                **amount_fields("min_quote_out", min_quote_out, quote_decimals),
                 "slippage_pct": slippage,
             }
 
@@ -389,8 +389,8 @@ async def sell_token(
             mint=mint_str,
             quote_mint=str(quote_mint),
             quote_symbol=symbol,
-            tokens_sold=token_amount / 10**TOKEN_DECIMALS,
-            quote_received=quote_out / 10**quote_decimals,
+            **amount_fields("tokens_sold", token_amount, TOKEN_DECIMALS),
+            **amount_fields("quote_received", quote_out, quote_decimals),
         )
     finally:
         await client.close()
@@ -603,8 +603,8 @@ async def collect_creator_fees(
             confirm,
             quote_mint=str(quote_mint),
             quote_symbol=quote_symbol(quote_mint),
-            pump_recovered=pump_balance / 10**quote_decimals,
-            pumpswap_recovered=pumpswap_balance / 10**quote_decimals,
+            **amount_fields("pump_recovered", pump_balance, quote_decimals),
+            **amount_fields("pumpswap_recovered", pumpswap_balance, quote_decimals),
         )
     finally:
         await client.close()

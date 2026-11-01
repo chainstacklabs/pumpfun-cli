@@ -8,6 +8,7 @@ HTTP_HEADERS = {"User-Agent": "pumpfun-cli (+https://github.com/chainstacklabs/p
 
 # Solana constants
 LAMPORTS_PER_SOL = 1_000_000_000
+SOL_DECIMALS = 9
 TOKEN_DECIMALS = 6  # every pump.fun coin has 6 decimals; other PumpSwap pools may not
 
 # System programs

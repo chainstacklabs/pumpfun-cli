@@ -6,9 +6,10 @@ from pathlib import Path
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
+from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair, encrypt_keypair, get_pubkey
-from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL
+from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL, SOL_DECIMALS
 
 
 def create_wallet(password: str, keystore_path: str, force: bool = False) -> dict:
@@ -118,7 +119,7 @@ async def transfer_sol(
     recipient = parse_pubkey(recipient_str, "recipient address")
     if recipient is None:
         return invalid_pubkey_error(recipient_str, "recipient address")
-    lamports = int(sol_amount * LAMPORTS_PER_SOL)
+    lamports = to_raw(sol_amount, SOL_DECIMALS)
     client = RpcClient(rpc_url)
     try:
         ix = transfer(
@@ -139,7 +140,7 @@ async def transfer_sol(
             "action": "transfer",
             "from": str(keypair.pubkey()),
             "to": recipient_str,
-            "sol_amount": sol_amount,
+            **amount_fields("sol_amount", lamports, SOL_DECIMALS),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
@@ -204,7 +205,7 @@ async def transfer_all_sol(
             "action": "transfer",
             "from": str(keypair.pubkey()),
             "to": recipient_str,
-            "sol_amount": send_lamports / LAMPORTS_PER_SOL,
+            **amount_fields("sol_amount", send_lamports, SOL_DECIMALS),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
@@ -234,7 +235,6 @@ async def transfer_token(
     )
     from spl.token.models import TransferCheckedParams
 
-    from pumpfun_cli.core.amounts import to_raw
     from pumpfun_cli.protocol.client import RpcClient
     from pumpfun_cli.protocol.quote import get_mint_info
 
@@ -291,7 +291,7 @@ async def transfer_token(
             "from": str(keypair.pubkey()),
             "to": recipient_str,
             "mint": mint_str,
-            "amount": raw_amount / (10**decimals),
+            **amount_fields("amount", raw_amount, decimals),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }

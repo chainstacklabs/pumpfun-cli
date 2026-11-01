@@ -78,6 +78,10 @@ but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
 `info` read it from the coin and label their output with it. Buying such a coin
 spends that asset, so the wallet has to hold it.
 
+In `--json` output every amount comes twice: in whole units for reading
+(`tokens_sold`) and as the exact integer in raw units (`tokens_sold_raw`). Use the
+`_raw` field for anything that has to add up; the float can drop a unit.
+
 ## Commands
 
 ```

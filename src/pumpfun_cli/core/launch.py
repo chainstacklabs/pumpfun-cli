@@ -7,7 +7,7 @@ import httpx
 from solders.keypair import Keypair
 from spl.token.instructions import create_idempotent_associated_token_account
 
-from pumpfun_cli.core.amounts import to_raw
+from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import derive_bonding_curve, find_ata, find_holder_rewards
@@ -248,7 +248,8 @@ async def launch_token(
             "is_holder_reward": is_holder_reward,
             "creator_fee_bps": creator_fee_bps or 0,
             "initial_buy": initial_buy,
-            "expected_tokens": expected_tokens / 10**TOKEN_DECIMALS,
+            "initial_buy_raw": amount_raw,
+            **amount_fields("expected_tokens", expected_tokens, TOKEN_DECIMALS),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
             "pump_url": f"https://pump.fun/coin/{mint}",

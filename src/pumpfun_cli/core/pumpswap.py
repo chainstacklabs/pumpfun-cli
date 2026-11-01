@@ -8,7 +8,7 @@ from pathlib import Path
 
 from solders.pubkey import Pubkey
 
-from pumpfun_cli.core.amounts import to_raw
+from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
@@ -167,12 +167,12 @@ async def buy_pumpswap(
                 "mint": mint_str,
                 "quote_mint": str(quote_mint),
                 "quote_symbol": symbol,
-                "quote_in": amount,
-                "expected_tokens": expected_tokens,
+                **amount_fields("quote_in", amount_raw, quote_decimals),
+                **amount_fields("expected_tokens", estimated_tokens, base_decimals),
                 "effective_price": effective_price,
                 "spot_price": spot_price,
                 "price_impact_pct": round(price_impact, 4),
-                "min_tokens_out": min_base_amount_out / 10**base_decimals,
+                **amount_fields("min_tokens_out", min_base_amount_out, base_decimals),
                 "slippage_pct": slippage,
             }
             if shortfall:
@@ -221,8 +221,8 @@ async def buy_pumpswap(
             "mint": mint_str,
             "quote_mint": str(quote_mint),
             "quote_symbol": symbol,
-            "quote_spent": amount,
-            "tokens_received": estimated_tokens / 10**base_decimals,
+            **amount_fields("quote_spent", amount_raw, quote_decimals),
+            **amount_fields("tokens_received", estimated_tokens, base_decimals),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
@@ -306,12 +306,12 @@ async def sell_pumpswap(
                 "mint": mint_str,
                 "quote_mint": str(quote_mint),
                 "quote_symbol": symbol,
-                "tokens_in": tokens_human,
-                "expected_quote": quote_out_human,
+                **amount_fields("tokens_in", token_amount, base_decimals),
+                **amount_fields("expected_quote", expected_quote, quote_decimals),
                 "effective_price": effective_price,
                 "spot_price": spot_price,
                 "price_impact_pct": round(price_impact, 4),
-                "min_quote_out": min_quote_out / 10**quote_decimals,
+                **amount_fields("min_quote_out", min_quote_out, quote_decimals),
                 "slippage_pct": slippage,
             }
 
@@ -345,8 +345,8 @@ async def sell_pumpswap(
             "mint": mint_str,
             "quote_mint": str(quote_mint),
             "quote_symbol": symbol,
-            "tokens_sold": token_amount / 10**base_decimals,
-            "quote_received": expected_quote / 10**quote_decimals,
+            **amount_fields("tokens_sold", token_amount, base_decimals),
+            **amount_fields("quote_received", expected_quote, quote_decimals),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
