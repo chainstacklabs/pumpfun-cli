@@ -266,3 +266,22 @@ def test_tokens_api_failure_is_a_clean_error():
         result = runner.invoke(app, ["tokens", "new"])
     assert result.exit_code == 1
     assert "404" in result.output
+
+
+def test_tokens_listing_survives_an_rpc_failure(monkeypatch):
+    monkeypatch.setenv("PUMPFUN_RPC", "http://rpc.test")
+    rows = [{"name": "A", "symbol": "A", "mint": "m1", "quote_symbol": "SOL", "usd_market_cap": 1}]
+    with (
+        _human("tokens"),
+        patch("pumpfun_cli.commands.tokens.get_new_tokens", new_callable=AsyncMock) as fetch,
+        patch(
+            "pumpfun_cli.commands.tokens.enrich_from_chain",
+            new=AsyncMock(side_effect=RuntimeError("RPC request failed")),
+        ),
+        patch("pumpfun_cli.commands.tokens.render_table") as table,
+    ):
+        fetch.return_value = rows
+        result = runner.invoke(app, ["tokens", "new"])
+    assert result.exit_code == 0
+    assert table.called
+    assert "Could not read prices from chain" in result.output

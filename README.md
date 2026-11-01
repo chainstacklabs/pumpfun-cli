@@ -140,11 +140,6 @@ Global options:
 | `tokens recommended` | `frontend-api-v3.pump.fun/coins/recommendations` | HTTPS |
 | `tokens search` | `frontend-api-v3.pump.fun/coins/search-unrestricted` | HTTPS |
 | `tokens *` with an RPC set | + Solana RPC (`getMultipleAccounts` for the bonding curves) | JSON-RPC |
-
-The `tokens` listings use pump.fun's frontend API, which is unofficial and
-changes without notice. They are narrowed to pump.fun coins on Solana; the API
-no longer returns curve reserves, so price and bonding progress come from the
-chain and need an RPC endpoint.
 | `info` | Solana RPC (`getAccountInfo` for bonding curve PDA) | JSON-RPC |
 | `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
 | `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
@@ -159,6 +154,11 @@ chain and need an RPC endpoint.
 | `wallet drain` | Solana RPC (`getTokenAccountsByOwner`, `sendTransaction`) | JSON-RPC |
 | `wallet create/show/import/export` | None (local keystore only) | — |
 | `config *` | None (local config file only) | — |
+
+The `tokens` listings use pump.fun's frontend API, which is unofficial and
+changes without notice. They are narrowed to pump.fun coins on Solana; the API
+no longer returns curve reserves, so price and bonding progress come from the
+chain and need an RPC endpoint.
 
 ## Security
 

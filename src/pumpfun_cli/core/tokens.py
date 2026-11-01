@@ -7,6 +7,7 @@ ones this CLI can trade; pump.fun's boards also carry other launchpads and chain
 """
 
 import httpx
+from solana.exceptions import SolanaRpcException
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.protocol.address import derive_bonding_curve
@@ -43,12 +44,39 @@ async def _get(path: str, params: dict) -> object:
     except httpx.HTTPError as exc:
         raise TokenApiError(f"pump.fun API request failed ({type(exc).__name__})") from None
     if resp.status_code != 200:
-        raise TokenApiError(f"pump.fun API returned HTTP {resp.status_code} for {path}")
-    return resp.json()
+        raise TokenApiError(
+            f"pump.fun API returned HTTP {resp.status_code} for {path}{_reason(resp)}"
+        )
+    try:
+        return resp.json()
+    except ValueError:
+        raise TokenApiError(f"pump.fun API returned a non-JSON response for {path}") from None
 
 
-def _is_pump_coin(row: dict) -> bool:
-    return row.get("chain_id") == SOLANA_CHAIN_ID and row.get("program") == PUMP_PROGRAM_LABEL
+def _reason(resp: httpx.Response) -> str:
+    """pump.fun's own error message, when the body is its JSON error; an HTML page says nothing."""
+    try:
+        message = resp.json().get("message")
+    except (ValueError, AttributeError):
+        return ""
+    if isinstance(message, list):
+        message = "; ".join(str(m) for m in message)
+    return f": {str(message)[:200]}" if message else ""
+
+
+def _is_pump_coin(row: object) -> bool:
+    if not isinstance(row, dict) or not isinstance(row.get("mint"), str):
+        return False
+    if row.get("chain_id") != SOLANA_CHAIN_ID or row.get("program") != PUMP_PROGRAM_LABEL:
+        return False
+    # A row whose mint or quote asset is not a pubkey cannot be priced or traded.
+    try:
+        Pubkey.from_string(row["mint"])
+        if row.get("quote_mint") is not None:
+            Pubkey.from_string(row["quote_mint"])
+    except (ValueError, TypeError):
+        return False
+    return True
 
 
 def _summarize(row: dict) -> dict:
@@ -71,7 +99,9 @@ def _summarize(row: dict) -> dict:
     }
 
 
-def _pump_coins(rows: list[dict], limit: int) -> list[dict]:
+def _pump_coins(rows: object, limit: int, path: str) -> list[dict]:
+    if not isinstance(rows, list):
+        raise TokenApiError(f"pump.fun API returned an unexpected shape for {path}")
     return [_summarize(r) for r in rows if _is_pump_coin(r)][:limit]
 
 
@@ -85,7 +115,9 @@ async def _board(board: str, limit: int) -> list[dict]:
     offset = 0
     while len(found) < limit:
         page = await _get(f"/coins/boards/{board}", {"limit": _BOARD_PAGE, "offset": offset})
-        rows = page.get("coins", []) if isinstance(page, dict) else []
+        rows = page.get("coins") if isinstance(page, dict) else None
+        if not isinstance(rows, list):
+            raise TokenApiError(f"pump.fun API returned an unexpected shape for board {board}")
         for row in rows:
             if _is_pump_coin(row):
                 found.setdefault(row.get("mint"), row)
@@ -112,29 +144,36 @@ async def get_graduating_tokens(limit: int = 20) -> list[dict]:
 
 async def get_recommended_tokens(limit: int = 10) -> list[dict]:
     """pump.fun's own recommendations; it serves at most 10."""
-    rows = await _get(
-        "/coins/recommendations",
-        {"surface": "search_entry", "limit": min(limit, _RECOMMENDATIONS_MAX)},
-    )
-    return _pump_coins(rows if isinstance(rows, list) else [], limit)
+    path = "/coins/recommendations"
+    rows = await _get(path, {"surface": "search_entry", "limit": min(limit, _RECOMMENDATIONS_MAX)})
+    return _pump_coins(rows, limit, path)
 
 
 async def search_tokens(query: str, limit: int = 20) -> list[dict]:
     """Search pump.fun coins by name or ticker, older coins included."""
-    rows = await _get(
-        "/coins/search-unrestricted",
-        {"searchTerm": query, "limit": _SEARCH_MAX},
-    )
-    return _pump_coins(rows if isinstance(rows, list) else [], limit)
+    path = "/coins/search-unrestricted"
+    rows = await _get(path, {"searchTerm": query, "limit": _SEARCH_MAX})
+    return _pump_coins(rows, limit, path)
 
 
 async def enrich_from_chain(tokens: list[dict], rpc_url: str) -> list[dict]:
     """Add price (in each coin's quote asset) and bonding progress read from the curves.
 
     A coin whose curve cannot be read keeps the API's fields only.
+
+    Raises:
+        RuntimeError: If the RPC endpoint fails; the caller can still show the listing
     """
     if not tokens:
         return tokens
+    try:
+        return await _enrich(tokens, rpc_url)
+    except SolanaRpcException as exc:
+        # Rebuilt without the original message, which can carry the endpoint URL.
+        raise RuntimeError(f"RPC request failed ({type(exc).__name__})") from None
+
+
+async def _enrich(tokens: list[dict], rpc_url: str) -> list[dict]:
     client = RpcClient(rpc_url)
     try:
         global_state = await fetch_global(client)

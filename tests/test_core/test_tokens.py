@@ -74,8 +74,9 @@ async def test_boards_keep_only_pump_coins(respx_mock, fn, board):
 
 
 async def test_board_pages_until_the_limit(respx_mock):
-    first = [_row(f"A{i}") for i in range(3)] + [EVM] * 146 + [_row("EDGE", mint="edge")]
-    second = [_row("EDGE", mint="edge")] + [_row(f"B{i}") for i in range(5)]
+    edge = str(Pubkey.new_unique())
+    first = [_row(f"A{i}") for i in range(3)] + [EVM] * 146 + [_row("EDGE", mint=edge)]
+    second = [_row("EDGE", mint=edge)] + [_row(f"B{i}") for i in range(5)]
     route = respx_mock.get(f"{PUMP_API}/coins/boards/new").mock(
         side_effect=[
             httpx.Response(200, json={"coins": first}),
@@ -171,3 +172,79 @@ async def test_enrich_reads_price_and_progress_from_the_curves():
     assert usdc["quote_symbol"] == "USDC" and usdc["price"] == pytest.approx(5e-6)
     assert "price" not in gone
     assert graduated["price"] is None and graduated["bonding_progress"] == 100.0
+
+
+async def test_error_carries_pump_funs_own_message(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/movers").mock(
+        return_value=httpx.Response(400, json={"message": ["board must be one of: new"]})
+    )
+    with pytest.raises(TokenApiError, match="400.*board must be one of: new"):
+        await get_trending_tokens()
+
+
+async def test_html_error_page_adds_nothing(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/boards/movers").mock(
+        return_value=httpx.Response(403, text="<!DOCTYPE html><html>challenge</html>")
+    )
+    with pytest.raises(TokenApiError) as info:
+        await get_trending_tokens()
+    assert "DOCTYPE" not in str(info.value)
+
+
+async def test_non_json_success_is_a_clean_error(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/search-unrestricted").mock(
+        return_value=httpx.Response(200, text="<html>challenge</html>")
+    )
+    with pytest.raises(TokenApiError, match="non-JSON"):
+        await search_tokens("pepe")
+
+
+@pytest.mark.parametrize("body", [{"coins": "nope"}, {"other": []}, ["not", "a", "board"]])
+async def test_unexpected_board_shape_is_a_clean_error(respx_mock, body):
+    respx_mock.get(f"{PUMP_API}/coins/boards/new").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+    with pytest.raises(TokenApiError, match="unexpected shape"):
+        await get_new_tokens()
+
+
+async def test_unexpected_search_shape_is_a_clean_error(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/recommendations").mock(
+        return_value=httpx.Response(200, json={"coins": []})
+    )
+    with pytest.raises(TokenApiError, match="unexpected shape"):
+        await get_recommended_tokens()
+
+
+async def test_malformed_rows_are_skipped_not_fatal(respx_mock):
+    respx_mock.get(f"{PUMP_API}/coins/search-unrestricted").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                "a string",
+                _row("BADQUOTE", quote="not-a-pubkey"),
+                _row("BADMINT", mint="nope"),
+                _row("GOOD"),
+            ],
+        )
+    )
+    assert [t["symbol"] for t in await search_tokens("x")] == ["GOOD"]
+
+
+async def test_rpc_failure_during_enrichment_is_a_runtime_error_without_the_url():
+    from unittest.mock import AsyncMock
+
+    from solana.exceptions import SolanaRpcException
+
+    client = FakeClient()
+    client.get_account_info = AsyncMock(
+        side_effect=SolanaRpcException(
+            TimeoutError("https://rpc.test/secret-api-key timed out"), lambda: None, None, object()
+        )
+    )
+    with (
+        patch("pumpfun_cli.core.tokens.RpcClient", return_value=client),
+        pytest.raises(RuntimeError) as info,
+    ):
+        await enrich_from_chain([{"mint": str(Pubkey.new_unique())}], "https://rpc.test")
+    assert "secret-api-key" not in str(info.value)

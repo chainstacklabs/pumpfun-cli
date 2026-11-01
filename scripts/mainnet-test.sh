@@ -308,7 +308,7 @@ else
 import json, sys
 tokens = json.load(sys.stdin)
 for t in tokens:
-    if t.get('complete') and t.get('pump_swap_pool'):
+    if t.get('complete') and t.get('quote_symbol') == 'SOL':
         print(t['mint'])
 " 2>/dev/null)
 
