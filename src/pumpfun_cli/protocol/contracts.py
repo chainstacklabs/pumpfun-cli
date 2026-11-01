@@ -2,6 +2,10 @@
 
 from solders.pubkey import Pubkey
 
+# pump.fun's HTTP endpoints sit behind Cloudflare, which rejects the default
+# python-httpx User-Agent; an identifying one is accepted.
+HTTP_HEADERS = {"User-Agent": "pumpfun-cli (+https://github.com/chainstacklabs/pumpfun-cli)"}
+
 # Solana constants
 LAMPORTS_PER_SOL = 1_000_000_000
 TOKEN_DECIMALS = 6  # every pump.fun coin has 6 decimals; other PumpSwap pools may not

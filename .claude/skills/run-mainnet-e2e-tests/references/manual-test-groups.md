@@ -123,8 +123,8 @@ uv run pumpfun claim-cashback --confirm       # may succeed or be no-op
 uv run pumpfun close-volume-acc --confirm     # may succeed or be no-op
 uv run pumpfun collect-creator-fee --confirm  # likely "No creator fees"
 uv run pumpfun migrate <ACTIVE_MINT> --confirm  # should error: "not complete"
-uv run pumpfun --json launch --name X --ticker X --desc x --creator-fee-bps 100  # should error: fee needs a QuoteControl mint
-uv run pumpfun --json launch --name X --ticker X --desc x --mayhem --quote-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v  # should error: mayhem needs SOL
+uv run pumpfun --json launch --name X --ticker X --uri https://example.com/token-v2.json --creator-fee-bps 100  # should error: fee needs a QuoteControl mint
+uv run pumpfun --json launch --name X --ticker X --uri https://example.com/token-v2.json --mayhem --quote-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v  # should error: mayhem needs SOL
 ```
 
 ## Group 10: Wallet Cleanup (SPENDS SOL -- recovers rent)

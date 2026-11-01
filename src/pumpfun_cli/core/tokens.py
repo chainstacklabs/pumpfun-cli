@@ -2,6 +2,8 @@
 
 import httpx
 
+from pumpfun_cli.protocol.contracts import HTTP_HEADERS
+
 PUMP_API = "https://frontend-api-v3.pump.fun"
 
 # The frontend API reports SOL-named reserves; these read them as the API returns them.
@@ -42,7 +44,7 @@ def _enrich_tokens(tokens: list[dict]) -> list[dict]:
 
 
 async def get_trending_tokens(limit: int = 20) -> list[dict]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=HTTP_HEADERS) as client:
         resp = await client.get(f"{PUMP_API}/coins/top-runners")
         resp.raise_for_status()
         runners = resp.json()
@@ -61,7 +63,7 @@ async def get_trending_tokens(limit: int = 20) -> list[dict]:
 
 
 async def get_recommended_tokens(limit: int = 50) -> list[dict]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=HTTP_HEADERS) as client:
         resp = await client.get(
             f"{PUMP_API}/coins/recommended",
             params={"limit": min(limit, 300), "includeNsfw": "false"},

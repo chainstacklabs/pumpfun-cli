@@ -12,8 +12,13 @@ def launch(
     ctx: typer.Context,
     name: str = typer.Option(..., "--name", help="Token name"),
     ticker: str = typer.Option(..., "--ticker", help="Token ticker/symbol"),
-    desc: str = typer.Option(..., "--desc", help="Token description"),
+    desc: str = typer.Option("", "--desc", help="Token description (for the metadata upload)"),
     image: str | None = typer.Option(None, "--image", help="Path to token image"),
+    uri: str | None = typer.Option(
+        None,
+        "--uri",
+        help="Metadata JSON URI you already host; skips the pump.fun upload (--desc and --image are then unused)",
+    ),
     buy: float | None = typer.Option(
         None,
         "--buy",
@@ -79,6 +84,7 @@ def launch(
                 is_holder_reward=holder_reward,
                 slippage=slippage,
                 confirm=confirm,
+                uri=uri,
                 **overrides,
             )
         )

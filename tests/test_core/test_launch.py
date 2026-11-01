@@ -136,3 +136,41 @@ async def test_custom_quote_buy_needs_the_asset(tmp_keystore):
     )
     assert result["error"] == "insufficient_balance"
     upload.assert_not_awaited()
+
+
+async def test_hosted_uri_skips_the_upload(tmp_keystore):
+    client = _chain()
+    result, upload = await _launch(client, tmp_keystore, uri="https://example.com/m.json")
+    upload.assert_not_awaited()
+    assert result["metadata_uri"] == "https://example.com/m.json"
+    create = _pump(client)[0]
+    assert b"https://example.com/m.json" in bytes(create.data)
+
+
+async def test_refused_upload_points_at_uri(tmp_keystore):
+    client = _chain()
+    with (
+        patch("pumpfun_cli.core.launch.RpcClient", return_value=client),
+        patch(
+            "pumpfun_cli.core.launch.upload_metadata",
+            AsyncMock(side_effect=RuntimeError("Metadata upload to pump.fun failed (HTTP 405)")),
+        ),
+    ):
+        result = await launch_token("http://rpc", tmp_keystore, "testpass", "N", "T", "d")
+    assert result["error"] == "ipfs_failed"
+    assert "--uri" in result["message"]
+    assert client.sent == []
+
+
+def test_upload_identifies_itself(respx_mock):
+    import asyncio
+
+    import httpx
+
+    from pumpfun_cli.core.launch import upload_metadata
+
+    route = respx_mock.post("https://pump.fun/api/ipfs").mock(
+        return_value=httpx.Response(200, json={"metadataUri": "https://ipfs.io/ipfs/x"})
+    )
+    assert asyncio.run(upload_metadata("N", "T", "d")) == "https://ipfs.io/ipfs/x"
+    assert route.calls.last.request.headers["user-agent"].startswith("pumpfun-cli")

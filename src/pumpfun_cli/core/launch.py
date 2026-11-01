@@ -12,6 +12,7 @@ from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import derive_bonding_curve, find_ata, find_holder_rewards
 from pumpfun_cli.protocol.client import RpcClient, TransactionFailedError
 from pumpfun_cli.protocol.contracts import (
+    HTTP_HEADERS,
     LAUNCH_COMPUTE_UNITS,
     TOKEN_2022_PROGRAM,
     TOKEN_DECIMALS,
@@ -44,7 +45,7 @@ async def upload_metadata(
     image_path: str | None = None,
 ) -> str:
     """Upload token metadata to pump.fun's IPFS endpoint. Returns metadata URI."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, headers=HTTP_HEADERS) as client:
         files = {}
         data = {
             "name": name,
@@ -60,7 +61,7 @@ async def upload_metadata(
             files=files if files else None,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"IPFS upload failed (HTTP {resp.status_code}): {resp.text[:200]}")
+            raise RuntimeError(f"Metadata upload to pump.fun failed (HTTP {resp.status_code})")
         result = resp.json()
         return result.get("metadataUri") or result.get("metadata_uri") or result.get("uri", "")
 
@@ -100,8 +101,12 @@ async def launch_token(
     confirm: bool = False,
     priority_fee: int | None = None,
     compute_units: int | None = None,
+    uri: str | None = None,
 ) -> dict:
     """Launch a new coin with create_v2, optionally buying it in the same transaction.
+
+    `uri` is a metadata JSON already hosted elsewhere; without it the metadata
+    is uploaded to pump.fun, which may refuse an unauthenticated upload.
 
     With `initial_buy`, create and buy go out as one transaction (v1, since
     together they exceed v0), so nobody can buy in between.
@@ -153,7 +158,14 @@ async def launch_token(
                     ),
                 }
 
-        uri = await upload_metadata(name, ticker, description, image_path)
+        if not uri:
+            try:
+                uri = await upload_metadata(name, ticker, description, image_path)
+            except RuntimeError as exc:
+                return {
+                    "error": "ipfs_failed",
+                    "message": f"{exc}. Host the metadata JSON yourself and pass --uri.",
+                }
         if not uri:
             return {"error": "ipfs_failed", "message": "Failed to get metadata URI from IPFS."}
 

@@ -66,8 +66,12 @@ pumpfun sell <mint> all
 pumpfun tx-status <signature>
 
 # Launch a token, buying it in the same transaction
-pumpfun launch --name "MyToken" --ticker "MTK" --desc "A great token" --buy 0.1
+pumpfun launch --name "MyToken" --ticker "MTK" --uri https://example.com/mytoken.json --buy 0.1
 ```
+
+pump.fun no longer accepts anonymous metadata uploads, so `launch` takes the
+URI of a metadata JSON you host (`name`, `symbol`, `description`, `image`).
+Without `--uri` it still tries the upload and says so when it is refused.
 
 Amounts are in the coin's quote asset. Most pump.fun coins are priced in SOL,
 but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
@@ -99,7 +103,7 @@ Transaction inspection (requires RPC):
   pumpfun tx-status <signature>              Confirmation status, slot, fee, errors
 
 Token launch (requires RPC + wallet):
-  pumpfun launch --name X --ticker Y --desc Z [--image path] [--buy N]
+  pumpfun launch --name X --ticker Y --uri U [--buy N]
                  [--quote-mint M] [--creator-fee-bps N] [--holder-reward]
                  [--mayhem] [--slippage N] [--confirm]
 
@@ -138,7 +142,7 @@ Global options:
 | `info` | Solana RPC (`getAccountInfo` for bonding curve PDA) | JSON-RPC |
 | `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
 | `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
-| `launch` | `pump.fun/api/ipfs` (metadata upload) + Solana RPC (`sendTransaction`) | HTTPS + JSON-RPC |
+| `launch` | Solana RPC (`sendTransaction`); `pump.fun/api/ipfs` only without `--uri` | JSON-RPC (+ HTTPS) |
 | `tx-status` | Solana RPC (`getTransaction`) | JSON-RPC |
 | `migrate` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `claim-cashback` | Solana RPC (`sendTransaction`) | JSON-RPC |
