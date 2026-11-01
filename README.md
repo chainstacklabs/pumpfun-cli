@@ -78,9 +78,12 @@ but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
 `info` read it from the coin and label their output with it. Buying such a coin
 spends that asset, so the wallet has to hold it.
 
-In `--json` output every amount comes twice: in whole units for reading
-(`tokens_sold`) and as the exact integer in raw units (`tokens_sold_raw`). Use the
-`_raw` field for anything that has to add up; the float can drop a unit.
+In `--json` output an exact amount comes twice: in whole units for reading
+(`tokens_sold`) and as the integer in raw units (`tokens_sold_raw`). Use the
+`_raw` field for anything that has to add up; the float can drop a unit. An
+amount known only as an estimate has no `_raw` twin: `quote_received`, the
+`collect-creator-fee` totals, and `tokens_received` unless the buy ran with
+`--confirm`, in which case it is read from the confirmed transaction.
 
 ## Commands
 

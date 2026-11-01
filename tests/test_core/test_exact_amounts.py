@@ -46,8 +46,10 @@ async def test_bonding_curve_buy_and_sell_report_raw(tmp_keystore):
             "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", dry_run=True
         )
     assert bought["quote_spent_raw"] == 130_000
-    assert isinstance(bought["tokens_received_raw"], int)
+    # Unconfirmed, the receipts are pre-trade estimates and carry no `_raw`.
+    assert "tokens_received" in bought and "tokens_received_raw" not in bought
     assert sold["tokens_sold_raw"] == LOSSY_RAW
+    assert "quote_received" in sold and "quote_received_raw" not in sold
     assert dry["tokens_in_raw"] == LOSSY_RAW
     assert {"expected_quote_raw", "min_quote_out_raw"} <= set(dry)
 
@@ -71,7 +73,39 @@ async def test_collect_reports_raw(tmp_keystore):
     client.balances[derive_creator_vault(_user(tmp_keystore))] = 650_240 + 123_456_789
     with patch("pumpfun_cli.core.trade.RpcClient", return_value=client):
         result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
-    assert result["pump_recovered_raw"] == 123_456_789
+    assert result["pump_recovered"] == 0.123456789
+    assert "pump_recovered_raw" not in result
+
+
+def _balances(owner: Pubkey, amount: int) -> list[dict]:
+    return [{"owner": str(owner), "mint": MINT_STR, "uiTokenAmount": {"amount": str(amount)}}]
+
+
+async def test_confirmed_buy_reports_the_tokens_it_received(tmp_keystore):
+    user = _user(tmp_keystore)
+    client = chain_with_coin()
+    client.transaction = {
+        "err": None,
+        "pre_token_balances": _balances(user, 5),
+        "post_token_balances": _balances(user, 5 + LOSSY_RAW),
+    }
+    with patch("pumpfun_cli.core.trade.RpcClient", return_value=client):
+        bought = await buy_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, 0.00013, confirm=True
+        )
+    assert bought["tokens_received_raw"] == LOSSY_RAW
+
+
+async def test_confirmed_buy_falls_back_to_the_estimate_when_unreadable(tmp_keystore):
+    client = chain_with_coin()
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient", return_value=client),
+        patch("pumpfun_cli.core.amounts.asyncio.sleep"),
+    ):
+        bought = await buy_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, 0.00013, confirm=True
+        )
+    assert bought["tokens_received"] > 0 and "tokens_received_raw" not in bought
 
 
 async def test_sol_transfer_sends_the_exact_amount(tmp_keystore):

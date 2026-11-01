@@ -9,7 +9,7 @@ from solders.pubkey import Pubkey
 from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair, encrypt_keypair, get_pubkey
-from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL, SOL_DECIMALS
+from pumpfun_cli.protocol.contracts import SOL_DECIMALS
 
 
 def create_wallet(password: str, keystore_path: str, force: bool = False) -> dict:
@@ -69,7 +69,7 @@ async def get_balance(rpc_url: str, pubkey_str: str, commitment: str = "confirme
     client = RpcClient(rpc_url)
     try:
         lamports = await client.get_balance(pubkey, commitment=commitment)
-        return {"pubkey": pubkey_str, "sol_balance": lamports / LAMPORTS_PER_SOL}
+        return {"pubkey": pubkey_str, **amount_fields("sol_balance", lamports, SOL_DECIMALS)}
     finally:
         await client.close()
 
@@ -427,6 +427,7 @@ async def drain_wallet(
         "ata_signature": ata_result.get("signature"),
         "ata_error": ata_result.get("ata_error"),
         "sol_transferred": sol_result.get("sol_amount", 0),
+        "sol_transferred_raw": sol_result.get("sol_amount_raw", 0),
         "sol_signature": sol_result.get("signature"),
         "sol_error": sol_result.get("error"),
     }

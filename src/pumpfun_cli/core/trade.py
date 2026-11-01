@@ -10,7 +10,12 @@ from pathlib import Path
 from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
-from pumpfun_cli.core.amounts import amount_fields, to_raw
+from pumpfun_cli.core.amounts import (
+    amount_fields,
+    confirmed_token_delta,
+    received_fields,
+    to_raw,
+)
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
@@ -246,6 +251,7 @@ async def buy_token(
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, PUMP_SLIPPAGE_ERROR_CODES)
+        received = await confirmed_token_delta(client, sig, user, mint) if confirm else None
         return _tx_result(
             "buy",
             sig,
@@ -255,7 +261,7 @@ async def buy_token(
             quote_mint=str(quote_mint),
             quote_symbol=symbol,
             **amount_fields("quote_spent", amount_raw, quote_decimals),
-            **amount_fields("tokens_received", tokens_out, TOKEN_DECIMALS),
+            **received_fields("tokens_received", received, tokens_out, TOKEN_DECIMALS),
         )
     finally:
         await client.close()
@@ -390,7 +396,7 @@ async def sell_token(
             quote_mint=str(quote_mint),
             quote_symbol=symbol,
             **amount_fields("tokens_sold", token_amount, TOKEN_DECIMALS),
-            **amount_fields("quote_received", quote_out, quote_decimals),
+            quote_received=quote_out / 10**quote_decimals,
         )
     finally:
         await client.close()
@@ -603,8 +609,9 @@ async def collect_creator_fees(
             confirm,
             quote_mint=str(quote_mint),
             quote_symbol=quote_symbol(quote_mint),
-            **amount_fields("pump_recovered", pump_balance, quote_decimals),
-            **amount_fields("pumpswap_recovered", pumpswap_balance, quote_decimals),
+            # Vault balances read before sending; fees landing in between are swept too.
+            pump_recovered=pump_balance / 10**quote_decimals,
+            pumpswap_recovered=pumpswap_balance / 10**quote_decimals,
         )
     finally:
         await client.close()

@@ -214,7 +214,8 @@ class RpcClient:
         Reads the raw JSON-RPC result rather than a typed response, so a
         transaction in any version is reported the same way.
 
-        Returns a dict with slot, err, fee, block_time — or None if not found.
+        Returns a dict with slot, err, fee, block_time and the token balances
+        before and after — or None if not found.
         """
         Signature.from_string(signature_str)  # reject a malformed signature before any I/O
         payload = {
@@ -250,6 +251,8 @@ class RpcClient:
             "err": meta.get("err"),
             "fee": meta.get("fee"),
             "block_time": result.get("blockTime"),
+            "pre_token_balances": meta.get("preTokenBalances") or [],
+            "post_token_balances": meta.get("postTokenBalances") or [],
         }
 
     async def close(self):

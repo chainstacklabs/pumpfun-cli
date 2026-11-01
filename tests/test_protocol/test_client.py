@@ -139,7 +139,14 @@ async def test_get_transaction_reads_v1_result(respx_mock):
         result = await client.get_transaction(_SIG)
     finally:
         await client.close()
-    assert result == {"slot": 7, "err": None, "fee": 5000, "block_time": 99}
+    assert result == {
+        "slot": 7,
+        "err": None,
+        "fee": 5000,
+        "block_time": 99,
+        "pre_token_balances": [],
+        "post_token_balances": [],
+    }
     body = respx_mock.calls.last.request.content
     assert b'"maxSupportedTransactionVersion":1' in body.replace(b" ", b"")
 

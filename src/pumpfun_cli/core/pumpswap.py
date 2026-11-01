@@ -8,7 +8,12 @@ from pathlib import Path
 
 from solders.pubkey import Pubkey
 
-from pumpfun_cli.core.amounts import amount_fields, to_raw
+from pumpfun_cli.core.amounts import (
+    amount_fields,
+    confirmed_token_delta,
+    received_fields,
+    to_raw,
+)
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import (
@@ -215,6 +220,7 @@ async def buy_pumpswap(
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, PUMPSWAP_SLIPPAGE_ERROR_CODES)
+        received = await confirmed_token_delta(client, sig, user, mint) if confirm else None
         result = {
             "action": "buy",
             "venue": "pumpswap",
@@ -222,7 +228,7 @@ async def buy_pumpswap(
             "quote_mint": str(quote_mint),
             "quote_symbol": symbol,
             **amount_fields("quote_spent", amount_raw, quote_decimals),
-            **amount_fields("tokens_received", estimated_tokens, base_decimals),
+            **received_fields("tokens_received", received, estimated_tokens, base_decimals),
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
@@ -346,7 +352,7 @@ async def sell_pumpswap(
             "quote_mint": str(quote_mint),
             "quote_symbol": symbol,
             **amount_fields("tokens_sold", token_amount, base_decimals),
-            **amount_fields("quote_received", expected_quote, quote_decimals),
+            "quote_received": expected_quote / 10**quote_decimals,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
