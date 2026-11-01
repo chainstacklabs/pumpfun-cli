@@ -214,7 +214,8 @@ class RpcClient:
         Reads the raw JSON-RPC result rather than a typed response, so a
         transaction in any version is reported the same way.
 
-        Returns a dict with slot, err, fee, block_time — or None if not found.
+        Returns a dict with slot, err, fee, block_time and the token balances
+        before and after (None if unrecorded) — or None if not found.
         """
         Signature.from_string(signature_str)  # reject a malformed signature before any I/O
         payload = {
@@ -238,7 +239,10 @@ class RpcClient:
             raise RuntimeError(f"getTransaction failed: {type(exc).__name__}") from None
         if resp.is_error:
             raise RuntimeError(f"getTransaction failed: HTTP {resp.status_code}")
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError:
+            raise RuntimeError("getTransaction failed: response is not JSON") from None
         if body.get("error"):
             raise RuntimeError(f"getTransaction failed: {body['error'].get('message')}")
         result = body.get("result")
@@ -250,6 +254,9 @@ class RpcClient:
             "err": meta.get("err"),
             "fee": meta.get("fee"),
             "block_time": result.get("blockTime"),
+            # None when the node did not record them, distinct from an empty list.
+            "pre_token_balances": meta.get("preTokenBalances"),
+            "post_token_balances": meta.get("postTokenBalances"),
         }
 
     async def close(self):

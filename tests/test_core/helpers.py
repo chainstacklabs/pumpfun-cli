@@ -182,6 +182,8 @@ class FakeClient:
         self.default_balance = 10_000_000_000
         self.sent: list[dict] = []
         self.send_error: Exception | None = None
+        # What getTransaction returns for any signature; None means not found.
+        self.transaction: dict | None = None
 
     def add(self, address: Pubkey, data: bytes, owner: Pubkey = TOKEN_PROGRAM) -> None:
         self.accounts[address] = SimpleNamespace(data=data, owner=owner, lamports=1)
@@ -219,6 +221,9 @@ class FakeClient:
             }
         )
         return "fakesig"
+
+    async def get_transaction(self, signature: str) -> dict | None:
+        return self.transaction
 
     async def close(self) -> None:
         return None
