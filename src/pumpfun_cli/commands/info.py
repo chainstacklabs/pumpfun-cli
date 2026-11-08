@@ -31,7 +31,7 @@ def info(
         error(result["message"])
     if not render(result, state.json_mode):
         typer.echo(f"Mint:             {result['mint']}")
-        if result.get("venue") == "launchlab":
+        if result.get("venue") in ("launchlab", "cpmm"):
             typer.echo(
                 f"Launchpad:        {result['platform'] or 'LaunchLab'} (Raydium LaunchLab)"
             )
@@ -45,8 +45,9 @@ def info(
             typer.echo(f"Quote reserves:   {result['quote_reserves']:.4f} {symbol}")
         else:
             typer.echo(f"Quote reserves:   {result['real_quote_reserves']:.4f} {symbol}")
-        if result.get("pumpswap_warning"):
-            typer.echo(f"Warning:          {result['pumpswap_warning']}")
+        if result.get("pumpswap_warning") or result.get("pool_warning"):
+            warning = result.get("pumpswap_warning") or result["pool_warning"]
+            typer.echo(f"Warning:          {warning}")
         typer.echo(f"Creator:          {result['creator'] or '\u2014'}")
         if result.get("is_mayhem_mode"):
             typer.echo("Mayhem mode:      Yes")
@@ -62,3 +63,5 @@ def info(
             typer.echo(f"Transfer fee:     {result['transfer_fee_bps']} bps")
         if result.get("migrate_type"):
             typer.echo(f"Migrated to:      {result['migrate_type']}")
+        if result.get("pool_fee_pct") is not None:
+            typer.echo(f"Pool fee:         {result['pool_fee_pct']:g}%")

@@ -72,6 +72,7 @@ async def test_no_pool(tmp_keystore):
     with _patched(client):
         result = await buy_pumpswap("http://rpc", tmp_keystore, "testpass", MINT_STR, 0.01)
     assert result["error"] == "pumpswap_error"
+    assert result["pool_missing"] is True
 
 
 async def test_no_liquidity(tmp_keystore):

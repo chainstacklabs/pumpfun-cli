@@ -79,6 +79,10 @@ pump.fun bonding curve is looked up there, and the output says `"venue":
 "launchlab"` and which launchpad (`platform`). A LaunchLab coin priced in
 anything but SOL is found with `getProgramAccounts`, so it needs an RPC that
 serves it. Token-2022 transfer fees are taken into account in the amounts.
+Once a LaunchLab coin graduates it trades on Raydium CPMM (`"venue": "cpmm"`),
+the same way a graduated pump.fun coin trades on PumpSwap; `--force-amm` goes
+straight to whichever pool the coin has. A coin that graduated to Raydium AMM
+v4 instead is refused.
 
 Amounts are in the coin's quote asset. Most pump.fun coins are priced in SOL,
 but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
@@ -113,7 +117,7 @@ Token discovery (zero config; price and progress added when an RPC is set):
   pumpfun tokens search <query>           Search by name or ticker
 
 Token info (requires RPC):
-  pumpfun info <mint>                     Price, bonding progress, reserves (pump.fun or LaunchLab)
+  pumpfun info <mint>                     Price, bonding progress, reserves (pump.fun or LaunchLab, and their pools)
 
 Trading (requires RPC + wallet):
   pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--confirm]

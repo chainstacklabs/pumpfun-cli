@@ -39,6 +39,7 @@ from pumpfun_cli.protocol.instructions import (
     build_pumpswap_sell_instructions,
 )
 from pumpfun_cli.protocol.pumpswap import (
+    PoolNotFoundError,
     get_global_config,
     get_pool_balances,
     get_pool_by_mint,
@@ -235,6 +236,9 @@ async def buy_pumpswap(
         if confirm:
             result["confirmed"] = True
         return result
+    except PoolNotFoundError as exc:
+        # Same error as before, marked so a caller can tell "no pool" apart.
+        return {"error": "pumpswap_error", "message": str(exc), "pool_missing": True}
     except (RuntimeError, ValueError) as exc:
         return {"error": "pumpswap_error", "message": str(exc)}
     finally:
@@ -359,6 +363,9 @@ async def sell_pumpswap(
         if confirm:
             result["confirmed"] = True
         return result
+    except PoolNotFoundError as exc:
+        # Same error as before, marked so a caller can tell "no pool" apart.
+        return {"error": "pumpswap_error", "message": str(exc), "pool_missing": True}
     except (RuntimeError, ValueError) as exc:
         return {"error": "pumpswap_error", "message": str(exc)}
     finally:
@@ -387,6 +394,9 @@ async def get_pumpswap_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30
             "mayhem_mode": pool["is_mayhem_mode"],
             "cashback": pool["is_cashback_coin"],
         }
+    except PoolNotFoundError as exc:
+        # Same error as before, marked so a caller can tell "no pool" apart.
+        return {"error": "pumpswap_error", "message": str(exc), "pool_missing": True}
     except (RuntimeError, ValueError) as exc:
         return {"error": "pumpswap_error", "message": str(exc)}
     finally:

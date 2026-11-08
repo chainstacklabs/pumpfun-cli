@@ -1125,3 +1125,107 @@ def test_a_coin_on_neither_venue_says_so(tmp_path, monkeypatch):
         result = runner.invoke(app, ["--rpc", "http://rpc", "buy", _FAKE_MINT, "0.01"])
     assert result.exit_code == 1
     assert "No pump.fun or LaunchLab coin" in result.output
+
+
+def _route_patches(command: str) -> dict:
+    """A patch for every venue `command` can route to."""
+    venues = {
+        "curve": f"{command}_token",
+        "amm": f"{command}_pumpswap",
+        "launchlab": f"{command}_launchlab",
+        "cpmm": f"{command}_cpmm",
+    }
+    return {
+        venue: patch(f"pumpfun_cli.commands.trade.{fn}", new_callable=AsyncMock)
+        for venue, fn in venues.items()
+    }
+
+
+def _run_routed(tmp_path, monkeypatch, command, args, results):
+    _setup_wallet(tmp_path, monkeypatch)
+    patches = _route_patches(command)
+    mocks = {venue: p.start() for venue, p in patches.items()}
+    try:
+        for venue, mock in mocks.items():
+            mock.return_value = results.get(
+                venue, {"error": "unexpected", "message": f"{venue} called"}
+            )
+        out = runner.invoke(app, ["--json", "--rpc", "http://rpc", command, *args])
+    finally:
+        for p in patches.values():
+            p.stop()
+    return out, mocks
+
+
+_OK = {"action": "buy", "venue": "cpmm", "signature": "s"}
+_NOT_FOUND = {"error": "not_found", "message": "none"}
+_NO_PUMPSWAP_POOL = {
+    "error": "pumpswap_error",
+    "message": "No PumpSwap pool found",
+    "pool_missing": True,
+}
+
+
+@pytest.mark.parametrize("command,amount", [("buy", "0.01"), ("sell", "all")])
+def test_a_graduated_launchlab_coin_trades_on_cpmm(tmp_path, monkeypatch, command, amount):
+    out, mocks = _run_routed(
+        tmp_path,
+        monkeypatch,
+        command,
+        [_FAKE_MINT, amount],
+        {
+            "curve": _NOT_FOUND,
+            "launchlab": {"error": "graduated", "message": "g", "migrate_type": "cpmm"},
+            "cpmm": {**_OK, "action": command},
+        },
+    )
+    assert out.exit_code == 0, out.output
+    assert json.loads(out.output)["venue"] == "cpmm"
+    mocks["amm"].assert_not_called()
+
+
+def test_force_amm_on_a_launchlab_coin_goes_to_cpmm(tmp_path, monkeypatch):
+    out, mocks = _run_routed(
+        tmp_path,
+        monkeypatch,
+        "buy",
+        ["--force-amm", _FAKE_MINT, "0.01"],
+        {"amm": _NO_PUMPSWAP_POOL, "cpmm": _OK},
+    )
+    assert out.exit_code == 0, out.output
+    assert json.loads(out.output)["venue"] == "cpmm"
+    mocks["curve"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "cpmm_result",
+    [_NOT_FOUND, {"error": "cpmm_error", "message": "could not search LaunchLab pools"}],
+)
+def test_force_amm_keeps_pumpswaps_error_when_the_coin_is_not_on_launchlab(
+    tmp_path, monkeypatch, cpmm_result
+):
+    out, _ = _run_routed(
+        tmp_path,
+        monkeypatch,
+        "buy",
+        ["--force-amm", _FAKE_MINT, "0.01"],
+        {"amm": _NO_PUMPSWAP_POOL, "cpmm": cpmm_result},
+    )
+    assert out.exit_code == 1
+    assert "No PumpSwap pool" in out.output
+
+
+@pytest.mark.parametrize(
+    "amm_result",
+    [
+        {"action": "buy", "venue": "pumpswap", "signature": "s"},
+        {"error": "slippage", "message": "slippage"},
+        # Sent but unconfirmed: the signature in the message must reach the user.
+        {"error": "pumpswap_error", "message": "Sent abc but could not confirm it"},
+    ],
+)
+def test_force_amm_on_a_pump_coin_never_tries_cpmm(tmp_path, monkeypatch, amm_result):
+    _, mocks = _run_routed(
+        tmp_path, monkeypatch, "buy", ["--force-amm", _FAKE_MINT, "0.01"], {"amm": amm_result}
+    )
+    mocks["cpmm"].assert_not_called()
