@@ -20,6 +20,7 @@ from spl.token.instructions import (
 from spl.token.models import CloseAccountParams, InitializeAccountParams
 
 from pumpfun_cli.protocol.address import (
+    derive_amm_boost_vault_authority,
     derive_amm_creator_vault,
     derive_amm_fee_config,
     derive_amm_global_volume_accumulator,
@@ -654,12 +655,15 @@ def build_migrate_v2_instruction(
 ) -> Instruction:
     """Move a complete curve's liquidity into its canonical PumpSwap pool.
 
-    `withdraw_authority` is read from pump.fun's Global account.
+    `withdraw_authority` is read from pump.fun's Global account. After the IDL's
+    27 accounts come the new pool's boost vault authority and its quote token
+    account: PumpSwap creates the boost vault during the migration.
     """
     bonding_curve = derive_bonding_curve(mint)
     pool_authority = derive_pool_authority(mint)
     pool = derive_amm_pool(mint, quote_mint)
     lp_mint = derive_amm_lp_mint(pool)
+    boost_vault_authority = derive_amm_boost_vault_authority(pool)
     return Instruction(
         PUMP_PROGRAM,
         MIGRATE_V2_DISCRIMINATOR,
@@ -691,5 +695,10 @@ def build_migrate_v2_instruction(
             _meta(RENT),
             _meta(PUMP_EVENT_AUTHORITY),
             _meta(PUMP_PROGRAM),
+            _meta(boost_vault_authority),
+            _meta(
+                find_ata(boost_vault_authority, quote_mint, quote_token_program),
+                writable=True,
+            ),
         ],
     )
