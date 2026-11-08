@@ -149,6 +149,12 @@ def derive_amm_pool(mint: Pubkey, quote_mint: Pubkey = WSOL_MINT) -> Pubkey:
     return addr
 
 
+def derive_amm_boost_vault_authority(pool: Pubkey) -> Pubkey:
+    """Derive a PumpSwap pool's boost vault authority PDA."""
+    addr, _ = Pubkey.find_program_address([b"boost_vault", bytes(pool)], PUMP_AMM_PROGRAM)
+    return addr
+
+
 def derive_amm_lp_mint(pool: Pubkey) -> Pubkey:
     """Derive a PumpSwap pool's LP mint."""
     addr, _ = Pubkey.find_program_address([b"pool_lp_mint", bytes(pool)], PUMP_AMM_PROGRAM)

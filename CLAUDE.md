@@ -130,6 +130,9 @@ lists; these are the ones this CLI depends on.
   pool, then `pool-v2` **only on a canonical pool** (`coin_creator` set), then the
   buyback recipient and its quote ATA last. The canonical pool is derived from the
   mint and the curve's quote mint.
+- `migrate_v2` also carries accounts the IDL omits: after its 27, the new pool's
+  boost vault authority (`["boost_vault", pool]` on PumpSwap) and that
+  authority's quote token account. Without them PumpSwap reverts with 6027.
 - `send_tx` sends v0 and falls back to v1 when the transaction exceeds 1232
   bytes (a cashback-pool buy, a launch with a buy). v1 carries the compute budget
   in its header.

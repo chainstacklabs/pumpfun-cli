@@ -102,7 +102,7 @@ PUMP_BUILDERS = [
     (
         "migrate_v2",
         lambda: ix.build_migrate_v2_instruction(mint=MINT, user=USER, withdraw_authority=CREATOR),
-        27,
+        29,
     ),
 ]
 
