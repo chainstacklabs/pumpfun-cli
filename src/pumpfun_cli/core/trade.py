@@ -41,6 +41,7 @@ from pumpfun_cli.protocol.curve import (
     calculate_buy_tokens_out,
     calculate_sell_quote_out,
     get_token_price,
+    max_sell_within_real_reserves,
     parse_bonding_curve,
 )
 from pumpfun_cli.protocol.instructions import (
@@ -62,6 +63,8 @@ from pumpfun_cli.protocol.quote import (
 )
 
 DEFAULT_PRIORITY_FEE = 200_000
+# pump.fun NotEnoughTokensToBuy: the buy asks for more tokens than the curve has left.
+_NOT_ENOUGH_TOKENS_TO_BUY = 6021
 
 
 def _estimate_buy_required_lamports(
@@ -250,6 +253,19 @@ async def buy_token(
                 compute_units=eff_compute_units,
             )
         except TransactionFailedError as exc:
+            if exc.error_code == _NOT_ENOUGH_TOKENS_TO_BUY:
+                left = state["real_token_reserves"] / 10**TOKEN_DECIMALS
+                return {
+                    "error": "exceeds_curve",
+                    "message": (
+                        f"The buy asks for more than the {left:.6f} tokens left on the"
+                        f" bonding curve. Spend less {symbol}."
+                    ),
+                    "error_code": exc.error_code,
+                    **amount_fields(
+                        "curve_tokens_left", state["real_token_reserves"], TOKEN_DECIMALS
+                    ),
+                }
             return _handle_tx_error(exc, PUMP_SLIPPAGE_ERROR_CODES)
         received = await confirmed_token_delta(client, sig, user, mint) if confirm else None
         return _tx_result(
@@ -324,6 +340,20 @@ async def sell_token(
         if token_amount <= 0:
             return {"error": "no_tokens", "message": "No tokens to sell."}
 
+        # The curve pays a sell out of its real reserves; sell what they cover.
+        sellable = max_sell_within_real_reserves(state, token_amount)
+        if sellable == 0:
+            return {
+                "error": "curve_short",
+                "message": (
+                    "The bonding curve's real reserves can't pay anything for these"
+                    " tokens now. Nothing was sent."
+                ),
+            }
+        kept = token_amount - sellable
+        token_amount = sellable
+        partial = amount_fields("tokens_kept", kept, TOKEN_DECIMALS) if kept else {}
+
         quote_out = calculate_sell_quote_out(state, token_amount)
         min_quote_out = max(1, int(quote_out * (1 - slippage / 100)))
 
@@ -349,6 +379,7 @@ async def sell_token(
                 "price_impact_pct": round(price_impact, 4),
                 **amount_fields("min_quote_out", min_quote_out, quote_decimals),
                 "slippage_pct": slippage,
+                **partial,
             }
 
         ixs = []
@@ -397,6 +428,7 @@ async def sell_token(
             quote_symbol=symbol,
             **amount_fields("tokens_sold", token_amount, TOKEN_DECIMALS),
             quote_received=quote_out / 10**quote_decimals,
+            **partial,
         )
     finally:
         await client.close()

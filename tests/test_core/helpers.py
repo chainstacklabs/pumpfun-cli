@@ -44,7 +44,7 @@ def build_curve_data(
     virtual_token: int = 1_000_000_000_000_000,
     virtual_quote: int = 30_000_000_000,
     real_token: int = 793_100_000_000_000,
-    real_quote: int = 0,
+    real_quote: int = 1_000_000_000,
     supply: int = 1_000_000_000_000_000,
     complete: bool = False,
     creator: Pubkey = CREATOR,

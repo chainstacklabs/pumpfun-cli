@@ -89,6 +89,12 @@ without `tokens_received_raw`, so check for the field. Dry-run fields
 (`expected_tokens_raw`, `expected_quote_raw`, `min_*_out_raw`) are exact
 integers of the quote the transaction would be built from, not executed amounts.
 
+A bonding curve pays a sell out of its real reserves, which on some coins hold
+less than the price promises. `sell` then sells the most the curve can pay for
+and reports the rest as `tokens_kept`; when it can pay nothing it sends nothing
+(`curve_short`). A buy bigger than what is left on the curve fails with
+`exceeds_curve` and the tokens left in `curve_tokens_left`.
+
 ## Commands
 
 ```
