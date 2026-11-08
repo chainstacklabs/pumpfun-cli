@@ -4,6 +4,7 @@ import asyncio
 
 import typer
 
+from pumpfun_cli.core.launchlab import buy_launchlab, sell_launchlab
 from pumpfun_cli.core.pumpswap import buy_pumpswap, sell_pumpswap
 from pumpfun_cli.core.trade import (
     buy_token,
@@ -20,6 +21,24 @@ from pumpfun_cli.core.trade import (
     collect_creator_fees as collect_creator_fees_core,
 )
 from pumpfun_cli.output import error, render
+
+
+def _route(curve, amm, launchlab, force_amm: bool, mint: str, call) -> dict:
+    """Trade where the coin lives: pump.fun's curve, then PumpSwap once it has
+    graduated, or a LaunchLab curve when pump.fun has no such coin.
+
+    `call(fn)` runs one venue's core function with the command's arguments.
+    """
+    if force_amm:
+        return call(amm)
+    result = call(curve)
+    if result.get("error") == "graduated":
+        return call(amm)
+    if result.get("error") == "not_found":
+        result = call(launchlab)
+        if result.get("error") == "not_found":
+            result["message"] = f"No pump.fun or LaunchLab coin found for {mint}."
+    return result
 
 
 def _get_overrides(ctx: typer.Context) -> dict:
@@ -90,9 +109,14 @@ def buy(
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
-        if force_amm:
-            result = asyncio.run(
-                buy_pumpswap(
+        result = _route(
+            buy_token,
+            buy_pumpswap,
+            buy_launchlab,
+            force_amm,
+            mint,
+            lambda fn: asyncio.run(
+                fn(
                     rpc,
                     keyfile,
                     password,
@@ -103,35 +127,8 @@ def buy(
                     dry_run=dry_run,
                     **overrides,
                 )
-            )
-        else:
-            result = asyncio.run(
-                buy_token(
-                    rpc,
-                    keyfile,
-                    password,
-                    mint,
-                    amount,
-                    slippage,
-                    confirm=confirm,
-                    dry_run=dry_run,
-                    **overrides,
-                )
-            )
-            if result.get("error") == "graduated":
-                result = asyncio.run(
-                    buy_pumpswap(
-                        rpc,
-                        keyfile,
-                        password,
-                        mint,
-                        amount,
-                        slippage,
-                        confirm=confirm,
-                        dry_run=dry_run,
-                        **overrides,
-                    )
-                )
+            ),
+        )
     except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("dry_run"):
@@ -183,9 +180,14 @@ def sell(
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
-        if force_amm:
-            result = asyncio.run(
-                sell_pumpswap(
+        result = _route(
+            sell_token,
+            sell_pumpswap,
+            sell_launchlab,
+            force_amm,
+            mint,
+            lambda fn: asyncio.run(
+                fn(
                     rpc,
                     keyfile,
                     password,
@@ -196,35 +198,8 @@ def sell(
                     dry_run=dry_run,
                     **overrides,
                 )
-            )
-        else:
-            result = asyncio.run(
-                sell_token(
-                    rpc,
-                    keyfile,
-                    password,
-                    mint,
-                    amount,
-                    slippage,
-                    confirm=confirm,
-                    dry_run=dry_run,
-                    **overrides,
-                )
-            )
-            if result.get("error") == "graduated":
-                result = asyncio.run(
-                    sell_pumpswap(
-                        rpc,
-                        keyfile,
-                        password,
-                        mint,
-                        amount,
-                        slippage,
-                        confirm=confirm,
-                        dry_run=dry_run,
-                        **overrides,
-                    )
-                )
+            ),
+        )
     except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("dry_run"):
