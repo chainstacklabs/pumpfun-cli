@@ -263,6 +263,69 @@ async def test_sell_dry_run(tmp_keystore):
     assert client.sent == []
 
 
+async def test_buy_past_the_curve_reports_tokens_left(tmp_keystore):
+    client = chain_with_coin()
+    client.send_error = TransactionFailedError({"InstructionError": [2, {"Custom": 6021}]})
+    with _patched(client):
+        result = await buy_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, 0.01, confirm=True
+        )
+    assert result["error"] == "exceeds_curve"
+    assert result["curve_tokens_left_raw"] == 793_100_000_000_000
+    assert "793100000.000000 tokens left" in result["message"]
+
+
+# A mayhem-style curve whose real reserves fall short of what its price promises.
+_SHORT_CURVE = {"real_quote": 1_000_000, "mayhem": True}
+_HELD = 10**14
+
+
+async def test_sell_caps_at_what_the_curve_can_pay(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin(curve=build_curve_data(**_SHORT_CURVE))
+    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = _HELD
+    with _patched(client):
+        result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
+    sold = int.from_bytes(bytes(_pump_ix(client.sent[0]).data[8:16]), "little")
+    assert 0 < sold < _HELD
+    assert result["tokens_sold_raw"] == sold
+    assert result["tokens_kept_raw"] == _HELD - sold
+    # The payout fits the real reserves, and one more token would not.
+    assert sold * 30_000_000_000 // (10**15 + sold) <= 1_000_000
+    assert (sold + 1) * 30_000_000_000 // (10**15 + sold + 1) > 1_000_000
+
+
+async def test_sell_dry_run_shows_what_the_curve_cant_pay(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin(curve=build_curve_data(**_SHORT_CURVE))
+    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = _HELD
+    with _patched(client):
+        result = await sell_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", dry_run=True
+        )
+    assert result["tokens_in_raw"] + result["tokens_kept_raw"] == _HELD
+    assert client.sent == []
+
+
+async def test_sell_within_reserves_keeps_nothing(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin()
+    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 5_000_000
+    with _patched(client):
+        result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
+    assert "tokens_kept" not in result
+
+
+async def test_sell_refused_when_the_curve_can_pay_nothing(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin(curve=build_curve_data(real_quote=0, mayhem=True))
+    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 5_000_000
+    with _patched(client):
+        result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
+    assert result["error"] == "curve_short"
+    assert client.sent == []
+
+
 # --- cashback, accumulator, fees, migration ---
 
 

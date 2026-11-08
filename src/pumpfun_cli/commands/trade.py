@@ -243,6 +243,8 @@ def sell(
                 f"  Min out:         {result['min_quote_out']:.6f} {symbol}"
                 f" ({result['slippage_pct']}% slippage)"
             )
+            if "tokens_kept" in result:
+                typer.echo(f"  Kept:            {result['tokens_kept']:.6f} (curve can't pay)")
         return
     if result.get("error"):
         code = 3 if result["error"] in ("graduated", "slippage", "no_tokens") else 1
@@ -253,6 +255,11 @@ def sell(
             f"Sold {result['tokens_sold']:.2f} tokens"
             f" for {result['quote_received']:.6f} {result['quote_symbol']}"
         )
+        if "tokens_kept" in result:
+            typer.echo(
+                f"Kept {result['tokens_kept']:.2f} tokens: the bonding curve's real"
+                " reserves can't pay for them now."
+            )
         typer.echo(f"TX: {result['explorer']}")
 
 

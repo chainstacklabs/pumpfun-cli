@@ -52,6 +52,23 @@ def test_buy_and_sell_name_the_quote_asset(wallet):
     assert sold.exit_code == 0 and "4.500000 USDC" in sold.output
 
 
+def test_a_capped_sell_says_what_it_kept(wallet):
+    with (
+        _human("trade"),
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as sell,
+    ):
+        sell.return_value = {
+            "action": "sell",
+            "quote_symbol": "SOL",
+            "quote_received": 0.001,
+            "tokens_sold": 6.0,
+            "tokens_kept": 4.0,
+            "explorer": "x",
+        }
+        sold = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all"])
+    assert sold.exit_code == 0 and "Kept 4.00 tokens" in sold.output
+
+
 def test_dry_runs(wallet):
     common = {
         "dry_run": True,
