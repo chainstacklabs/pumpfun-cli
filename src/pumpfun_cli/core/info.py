@@ -1,5 +1,6 @@
 """Fetch on-chain token info."""
 
+from pumpfun_cli.core.launchlab import get_launchlab_info
 from pumpfun_cli.core.pumpswap import get_pumpswap_info
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.protocol.address import derive_bonding_curve
@@ -22,7 +23,10 @@ async def get_token_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30.0)
     try:
         resp = await client.get_account_info(bonding_curve)
         if not resp.value:
-            return {"error": "not_found", "message": f"No bonding curve found for {mint_str}"}
+            result = await get_launchlab_info(rpc_url, mint_str, rpc_timeout=rpc_timeout)
+            if result.get("error") == "not_found":
+                result["message"] = f"No pump.fun or LaunchLab coin found for {mint_str}."
+            return result
         state = parse_bonding_curve(bytes(resp.value.data))
         quote_mint = state["quote_mint"]
         _, quote_decimals = await get_mint_info(client, quote_mint)
@@ -32,6 +36,7 @@ async def get_token_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30.0)
 
         result = {
             "mint": mint_str,
+            "venue": "pumpswap" if graduated else "bonding_curve",
             "bonding_curve": str(bonding_curve),
             "quote_mint": str(quote_mint),
             "quote_symbol": quote_symbol(quote_mint),

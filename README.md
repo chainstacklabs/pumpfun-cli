@@ -73,6 +73,13 @@ pump.fun no longer accepts anonymous metadata uploads, so `launch` takes the
 URI of a metadata JSON you host (`name`, `symbol`, `description`, `image`).
 Without `--uri` it still tries the upload and says so when it is refused.
 
+`buy`, `sell` and `info` also work on coins launched on Raydium LaunchLab, the
+program behind letsbonk.fun, StonkFun and other launchpads: a mint with no
+pump.fun bonding curve is looked up there, and the output says `"venue":
+"launchlab"` and which launchpad (`platform`). A LaunchLab coin priced in
+anything but SOL is found with `getProgramAccounts`, so it needs an RPC that
+serves it. Token-2022 transfer fees are taken into account in the amounts.
+
 Amounts are in the coin's quote asset. Most pump.fun coins are priced in SOL,
 but a coin can be priced in USDC or another admitted mint; `buy`, `sell` and
 `info` read it from the coin and label their output with it. Buying such a coin
@@ -106,7 +113,7 @@ Token discovery (zero config; price and progress added when an RPC is set):
   pumpfun tokens search <query>           Search by name or ticker
 
 Token info (requires RPC):
-  pumpfun info <mint>                     Price, bonding progress, reserves
+  pumpfun info <mint>                     Price, bonding progress, reserves (pump.fun or LaunchLab)
 
 Trading (requires RPC + wallet):
   pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--confirm]
@@ -157,9 +164,9 @@ Global options:
 | `tokens recommended` | `frontend-api-v3.pump.fun/coins/recommendations` | HTTPS |
 | `tokens search` | `frontend-api-v3.pump.fun/coins/search-unrestricted` | HTTPS |
 | `tokens *` with an RPC set | + Solana RPC (`getMultipleAccounts` for the bonding curves) | JSON-RPC |
-| `info` | Solana RPC (`getAccountInfo` for bonding curve PDA) | JSON-RPC |
-| `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
-| `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`) | JSON-RPC |
+| `info` | Solana RPC (`getAccountInfo` for bonding curve PDA; LaunchLab: `getMultipleAccounts`, `getProgramAccounts`) | JSON-RPC |
+| `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`; LaunchLab adds `getMultipleAccounts`, `getProgramAccounts`) | JSON-RPC |
+| `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`; LaunchLab as `buy`) | JSON-RPC |
 | `launch` | Solana RPC (`sendTransaction`); `pump.fun/api/ipfs` only without `--uri` | JSON-RPC (+ HTTPS) |
 | `tx-status` | Solana RPC (`getTransaction`) | JSON-RPC |
 | `migrate` | Solana RPC (`sendTransaction`) | JSON-RPC |

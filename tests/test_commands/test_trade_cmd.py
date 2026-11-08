@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from pumpfun_cli.cli import app
@@ -1084,3 +1085,43 @@ def test_sell_graduated_fallback_sell_all(tmp_path, monkeypatch):
     # Verify "all" was passed through
     call_args = mock_pumpswap.call_args
     assert call_args[0][4] == "all"
+
+
+@pytest.mark.parametrize(
+    "command,curve,launchlab,amount",
+    [
+        ("buy", "buy_token", "buy_launchlab", "0.01"),
+        ("sell", "sell_token", "sell_launchlab", "all"),
+    ],
+)
+def test_a_coin_pump_fun_lacks_trades_on_launchlab(
+    tmp_path, monkeypatch, command, curve, launchlab, amount
+):
+    """No pump.fun curve: the trade goes to the coin's LaunchLab curve, same arguments."""
+    _setup_wallet(tmp_path, monkeypatch)
+    with (
+        patch(f"pumpfun_cli.commands.trade.{curve}", new_callable=AsyncMock) as mock_curve,
+        patch(f"pumpfun_cli.commands.trade.{launchlab}", new_callable=AsyncMock) as mock_ll,
+    ):
+        mock_curve.return_value = {"error": "not_found", "message": "No bonding curve"}
+        mock_ll.return_value = {"action": command, "venue": "launchlab", "signature": "s"}
+        result = runner.invoke(
+            app,
+            ["--json", "--rpc", "http://rpc", command, "--slippage", "7", _FAKE_MINT, amount],
+        )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["venue"] == "launchlab"
+    assert mock_ll.call_args.args[3:6] == (_FAKE_MINT, mock_curve.call_args.args[4], 7)
+
+
+def test_a_coin_on_neither_venue_says_so(tmp_path, monkeypatch):
+    _setup_wallet(tmp_path, monkeypatch)
+    with (
+        patch("pumpfun_cli.commands.trade.buy_token", new_callable=AsyncMock) as mock_curve,
+        patch("pumpfun_cli.commands.trade.buy_launchlab", new_callable=AsyncMock) as mock_ll,
+    ):
+        mock_curve.return_value = {"error": "not_found", "message": "No bonding curve"}
+        mock_ll.return_value = {"error": "not_found", "message": "No LaunchLab pool"}
+        result = runner.invoke(app, ["--rpc", "http://rpc", "buy", _FAKE_MINT, "0.01"])
+    assert result.exit_code == 1
+    assert "No pump.fun or LaunchLab coin" in result.output
