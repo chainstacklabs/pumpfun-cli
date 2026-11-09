@@ -9,9 +9,10 @@ PASS=0
 FAIL=0
 
 run_test() {
-    local name="$1" hook="$2" input="$3" expect_exit="$4" expect_stderr="$5"
+    local name="$1" hook="$2" input="$3" expect_exit="$4" expect_output="$5"
 
-    actual_stderr=$(echo "$input" | CLAUDE_PROJECT_DIR="$PROJ" uv run python "$PROJ/.claude/hooks/$hook" 2>&1 1>/dev/null || true)
+    # stdout carries the JSON advisory, stderr the block reason; check both.
+    actual_output=$(echo "$input" | CLAUDE_PROJECT_DIR="$PROJ" uv run python "$PROJ/.claude/hooks/$hook" 2>&1 || true)
     actual_exit=$(echo "$input" | CLAUDE_PROJECT_DIR="$PROJ" uv run python "$PROJ/.claude/hooks/$hook" >/dev/null 2>/dev/null; echo $?)
 
     local ok=true
@@ -21,14 +22,14 @@ run_test() {
         ok=false
     fi
 
-    if [[ -n "$expect_stderr" && "$actual_stderr" != *"$expect_stderr"* ]]; then
-        echo "FAIL: $name — stderr missing '$expect_stderr'"
-        echo "  got: $actual_stderr"
+    if [[ -n "$expect_output" && "$actual_output" != *"$expect_output"* ]]; then
+        echo "FAIL: $name — output missing '$expect_output'"
+        echo "  got: $actual_output"
         ok=false
     fi
 
-    if [[ -z "$expect_stderr" && -n "$actual_stderr" ]]; then
-        echo "FAIL: $name — expected no stderr, got: $actual_stderr"
+    if [[ -z "$expect_output" && -n "$actual_output" ]]; then
+        echo "FAIL: $name — expected no output, got: $actual_output"
         ok=false
     fi
 
@@ -79,7 +80,15 @@ run_test "allows README.md" "guard.py" \
     "0" ""
 
 echo ""
-echo "=== bash-guard.py (PreToolUse Bash) — advisory only ==="
+echo "=== bash-guard.py (PreToolUse Bash) ==="
+
+run_test "blocks git add docs/*.md (exit 2)" "bash-guard.py" \
+    '{"tool_input":{"command":"git add docs/notes.md"}}' \
+    "2" "BLOCKED: docs/*.md files are in .gitignore"
+
+run_test "advisory is JSON additionalContext" "bash-guard.py" \
+    '{"tool_input":{"command":"pumpfun buy ABC123 0.1"}}' \
+    "0" '"additionalContext": "NOTE: This command sends a Solana transaction'
 
 run_test "warns on pumpfun buy (exit 0)" "bash-guard.py" \
     '{"tool_input":{"command":"uv run pumpfun buy ABC123 0.1"}}' \

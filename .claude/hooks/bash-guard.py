@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Pre-bash guard: block dangerous git operations, warn on transactions.
 
-BLOCKS (exit 1): git add of docs/*.md (gitignored files).
+BLOCKS (exit 2): git add of docs/*.md (gitignored files).
 ADVISORY (exit 0): transaction commands, mainnet tests, sensitive file deletion.
+The note goes back as JSON `additionalContext`, the only channel Claude reads
+on exit 0; the command still runs.
 """
 
 import json
@@ -11,8 +13,6 @@ import sys
 
 data = json.load(sys.stdin)
 command = data.get("tool_input", {}).get("command", "")
-
-# --- Advisory warnings (exit 0 — never block) ---
 
 # Transaction-sending CLI commands
 TX_COMMANDS = re.compile(
@@ -44,34 +44,33 @@ if GIT_ADD_DOCS_MD.search(command):
         "Remove docs/ paths from your git add command.",
         file=sys.stderr,
     )
-    sys.exit(1)
+    sys.exit(2)
 
-elif TX_COMMANDS.search(command):
-    print(
-        "NOTE: This command sends a Solana transaction. On mainnet this costs real SOL.",
-        file=sys.stderr,
-    )
-
+note = None
+if TX_COMMANDS.search(command):
+    note = "NOTE: This command sends a Solana transaction. On mainnet this costs real SOL."
 elif MAINNET_PATTERNS.search(command):
-    print(
+    note = (
         "NOTE: This runs mainnet end-to-end tests (costs real SOL). "
-        "Make sure the user has confirmed.",
-        file=sys.stderr,
+        "Make sure the user has confirmed."
     )
-
 elif SENSITIVE_DELETE.search(command):
-    print(
+    note = (
         "NOTE: This deletes a sensitive file (.env, wallet, or credentials). "
-        "Make sure the user intended this.",
-        file=sys.stderr,
+        "Make sure the user intended this."
     )
-
 elif IDL_DELETE.search(command):
-    print(
+    note = (
         "NOTE: This deletes IDL files (source-of-truth from on-chain programs). "
-        "These cannot be regenerated without fetching from chain.",
-        file=sys.stderr,
+        "These cannot be regenerated without fetching from chain."
     )
 
-# Always allow — this is advisory only
+if note:
+    print(
+        json.dumps(
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note}}
+        )
+    )
+
+# Advisory only — never block
 sys.exit(0)
