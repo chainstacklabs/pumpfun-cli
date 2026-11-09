@@ -2,7 +2,12 @@
 
 import typer
 
-from pumpfun_cli.core.config import delete_config_value, load_config, save_config_value
+from pumpfun_cli.core.config import (
+    KNOWN_KEYS,
+    delete_config_value,
+    load_config,
+    save_config_value,
+)
 from pumpfun_cli.group import JsonAwareGroup
 from pumpfun_cli.output import error, render
 
@@ -21,6 +26,12 @@ def _config_callback(ctx: typer.Context):
 @app.command("set")
 def config_set(ctx: typer.Context, key: str, value: str):
     """Set a config value."""
+    if key not in KNOWN_KEYS:
+        error(
+            f"Unknown config key: {key}",
+            hint=f"Valid keys: {', '.join(sorted(KNOWN_KEYS))}",
+            exit_code=2,
+        )
     save_config_value(key, value)
     json_mode = ctx.obj.json_mode if ctx.obj else False
     if not render({"key": key, "value": value, "status": "saved"}, json_mode):

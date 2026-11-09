@@ -1,6 +1,7 @@
 """Wallet management commands."""
 
 import asyncio
+import math
 import os
 import sys
 from pathlib import Path
@@ -215,6 +216,17 @@ def wallet_transfer(
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
 ):
     """Transfer SOL or tokens to another wallet."""
+    if amount.lower() != "all":
+        try:
+            value = float(amount)
+        except ValueError:
+            value = math.nan
+        if not math.isfinite(value) or value <= 0:
+            error(
+                "Amount must be a number greater than 0, or 'all'.",
+                hint=f"Got: {amount}",
+                exit_code=2,
+            )
     path = _get_keystore_path(ctx)
     if not Path(path).exists():
         error("No wallet found.", hint="Run: pumpfun wallet create")

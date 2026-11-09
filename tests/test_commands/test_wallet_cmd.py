@@ -3,6 +3,7 @@
 import os
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from pumpfun_cli.cli import app
@@ -345,3 +346,25 @@ def test_wallet_drain_no_wallet(tmp_path):
             ],
         )
     assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("amount", ["0", "0.0", "-1", "abc", "nan", "inf"])
+@pytest.mark.parametrize("mint", [None, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"])
+def test_wallet_transfer_rejects_bad_amount(tmp_path, amount, mint):
+    """Zero, negative or non-numeric amounts never reach core."""
+    keyfile = _make_wallet(tmp_path)
+    env = {"PUMPFUN_PASSWORD": "testpass", "PUMPFUN_RPC": "http://fake-rpc"}
+    args = ["--keyfile", keyfile, "wallet", "transfer"]
+    if mint:
+        args += ["--mint", mint]
+    args += ["--", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount]
+    with (
+        patch.dict(os.environ, env),
+        patch("pumpfun_cli.commands.wallet.transfer_sol") as sol,
+        patch("pumpfun_cli.commands.wallet.transfer_token") as token,
+    ):
+        result = runner.invoke(app, args)
+    assert result.exit_code == 2
+    assert "greater than 0" in result.output
+    sol.assert_not_called()
+    token.assert_not_called()

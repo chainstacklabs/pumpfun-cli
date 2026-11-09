@@ -733,3 +733,25 @@ def test_drain_wallet_wrong_password(tmp_path):
                 "http://rpc", keyfile, "wrongpass", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_transfer_sol_below_one_lamport_sends_nothing(tmp_path):
+    """An amount that rounds to 0 lamports is refused before any RPC call."""
+    from pumpfun_cli.core.wallet import transfer_sol
+    from pumpfun_cli.crypto import encrypt_keypair
+
+    keyfile = tmp_path / "wallet.enc"
+    encrypt_keypair(Keypair(), "testpass", keyfile)
+
+    with patch("pumpfun_cli.protocol.client.RpcClient") as client_cls:
+        result = await transfer_sol(
+            "http://rpc",
+            str(keyfile),
+            "testpass",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            0.0000000001,
+        )
+
+    assert result["error"] == "invalid_amount"
+    client_cls.assert_not_called()

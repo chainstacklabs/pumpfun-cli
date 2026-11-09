@@ -236,6 +236,35 @@ def test_launch_rejects_negative_buy(wallet):
     launch.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("name", "ticker", "message"),
+    [
+        ("", "T", "Token name cannot be empty."),
+        ("   ", "T", "Token name cannot be empty."),
+        ("N", "", "Token ticker cannot be empty."),
+        ("N", "  ", "Token ticker cannot be empty."),
+    ],
+)
+def test_launch_rejects_blank_name_or_ticker(wallet, name, ticker, message):
+    with patch("pumpfun_cli.commands.launch.launch_token", new_callable=AsyncMock) as launch:
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "launch", "--name", name, "--ticker", ticker, "--uri", "u"],
+        )
+    assert result.exit_code == 2
+    assert message in result.output
+    launch.assert_not_called()
+
+
+def test_launch_with_uri_needs_no_desc(wallet):
+    with patch("pumpfun_cli.commands.launch.launch_token", new_callable=AsyncMock) as launch:
+        launch.return_value = {"error": "stop", "message": "stop"}
+        runner.invoke(
+            app, ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", "--uri", "u"]
+        )
+    launch.assert_called_once()
+
+
 def test_tokens_table_names_quote_and_survives_missing_chain_data():
     rows = [
         {
