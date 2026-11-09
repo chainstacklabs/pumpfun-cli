@@ -26,6 +26,10 @@ from pumpfun_cli.protocol.contracts import (
 from pumpfun_cli.protocol.quote import get_mint_info
 
 
+class PoolNotFoundError(RuntimeError):
+    """The coin has no canonical PumpSwap pool."""
+
+
 async def get_pool_by_mint(
     client: RpcClient, mint: Pubkey, quote_mint: Pubkey = WSOL_MINT
 ) -> tuple[Pubkey, bytes]:
@@ -35,7 +39,8 @@ async def get_pool_by_mint(
     with a single getAccountInfo.
 
     Raises:
-        RuntimeError: If the pool does not exist or cannot be read
+        PoolNotFoundError: If the pool does not exist
+        RuntimeError: If the pool cannot be read
     """
     pool_address = derive_amm_pool(mint, quote_mint)
     try:
@@ -43,7 +48,7 @@ async def get_pool_by_mint(
     except Exception as exc:
         raise RuntimeError(f"Failed to fetch PumpSwap pool {pool_address}: {exc}") from exc
     if not resp.value:
-        raise RuntimeError(f"No PumpSwap pool found for {mint}")
+        raise PoolNotFoundError(f"No PumpSwap pool found for {mint}")
     return pool_address, bytes(resp.value.data)
 
 

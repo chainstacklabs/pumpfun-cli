@@ -1,5 +1,6 @@
 """Fetch on-chain token info."""
 
+from pumpfun_cli.core.cpmm import get_cpmm_info
 from pumpfun_cli.core.launchlab import get_launchlab_info
 from pumpfun_cli.core.pumpswap import get_pumpswap_info
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
@@ -26,6 +27,12 @@ async def get_token_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30.0)
             result = await get_launchlab_info(rpc_url, mint_str, rpc_timeout=rpc_timeout)
             if result.get("error") == "not_found":
                 result["message"] = f"No pump.fun or LaunchLab coin found for {mint_str}."
+            elif result.get("migrate_type") == "cpmm":
+                pool = await get_cpmm_info(rpc_url, mint_str, rpc_timeout=rpc_timeout)
+                if pool.get("error"):
+                    result["pool_warning"] = f"CPMM pool lookup failed: {pool['message']}"
+                else:
+                    result.update(pool, venue="cpmm")
             return result
         state = parse_bonding_curve(bytes(resp.value.data))
         quote_mint = state["quote_mint"]

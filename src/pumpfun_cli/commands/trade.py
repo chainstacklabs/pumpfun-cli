@@ -4,6 +4,7 @@ import asyncio
 
 import typer
 
+from pumpfun_cli.core.cpmm import buy_cpmm, sell_cpmm
 from pumpfun_cli.core.launchlab import buy_launchlab, sell_launchlab
 from pumpfun_cli.core.pumpswap import buy_pumpswap, sell_pumpswap
 from pumpfun_cli.core.trade import (
@@ -23,19 +24,30 @@ from pumpfun_cli.core.trade import (
 from pumpfun_cli.output import error, render
 
 
-def _route(curve, amm, launchlab, force_amm: bool, mint: str, call) -> dict:
-    """Trade where the coin lives: pump.fun's curve, then PumpSwap once it has
-    graduated, or a LaunchLab curve when pump.fun has no such coin.
+def _route(curve, amm, launchlab, cpmm, force_amm: bool, mint: str, call) -> dict:
+    """Trade where the coin lives.
 
-    `call(fn)` runs one venue's core function with the command's arguments.
+    pump.fun's curve, then PumpSwap once it has graduated; a LaunchLab curve
+    when pump.fun has no such coin, then Raydium CPMM once that has graduated.
+    `--force-amm` goes straight to the pool: PumpSwap, or CPMM for a LaunchLab
+    coin. `call(fn)` runs one venue's core function with the command's arguments.
     """
     if force_amm:
-        return call(amm)
+        result = call(amm)
+        if result.get("pool_missing"):
+            # No PumpSwap pool: a LaunchLab coin trades on CPMM. Unless CPMM
+            # recognises the coin, PumpSwap's own error stands.
+            pool_result = call(cpmm)
+            if pool_result.get("error") not in ("not_found", "cpmm_error"):
+                return pool_result
+        return result
     result = call(curve)
     if result.get("error") == "graduated":
         return call(amm)
     if result.get("error") == "not_found":
         result = call(launchlab)
+        if result.get("error") == "graduated":
+            return call(cpmm)
         if result.get("error") == "not_found":
             result["message"] = f"No pump.fun or LaunchLab coin found for {mint}."
     return result
@@ -94,7 +106,9 @@ def buy(
         15, "--slippage", help="Slippage tolerance percent (default: 15)"
     ),
     force_amm: bool = typer.Option(
-        False, "--force-amm", help="Skip bonding curve, buy directly on PumpSwap AMM"
+        False,
+        "--force-amm",
+        help="Skip the bonding curve, buy in the pool (PumpSwap, or CPMM for LaunchLab coins)",
     ),
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
     dry_run: bool = typer.Option(
@@ -113,6 +127,7 @@ def buy(
             buy_token,
             buy_pumpswap,
             buy_launchlab,
+            buy_cpmm,
             force_amm,
             mint,
             lambda fn: asyncio.run(
@@ -167,7 +182,9 @@ def sell(
         15, "--slippage", help="Slippage tolerance percent (default: 15)"
     ),
     force_amm: bool = typer.Option(
-        False, "--force-amm", help="Skip bonding curve, sell directly on PumpSwap AMM"
+        False,
+        "--force-amm",
+        help="Skip the bonding curve, sell in the pool (PumpSwap, or CPMM for LaunchLab coins)",
     ),
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
     dry_run: bool = typer.Option(
@@ -184,6 +201,7 @@ def sell(
             sell_token,
             sell_pumpswap,
             sell_launchlab,
+            sell_cpmm,
             force_amm,
             mint,
             lambda fn: asyncio.run(
