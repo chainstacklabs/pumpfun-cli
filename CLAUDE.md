@@ -1,6 +1,6 @@
 # CLAUDE.md — pumpfun-cli
 
-CLI for trading, launching, and browsing tokens on pump.fun (Solana). Python 3.12+, uv, Typer, solana-py/solders.
+CLI for trading on pump.fun and Raydium LaunchLab launchpads (Solana), and launching on pump.fun. Python 3.12+, uv, Typer, solana-py/solders.
 
 ## Commands
 
