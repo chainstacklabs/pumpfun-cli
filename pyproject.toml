@@ -9,7 +9,7 @@ dependencies = [
     "typer",
     "httpx",
     "solana>=0.40.3",
-    "cryptography",
+    "cryptography>=50.0.0",
     "python-dotenv",
     "tomli-w",
     "base58>=2.1.1",
