@@ -172,7 +172,7 @@ Three hooks run automatically during Claude Code sessions (see `.claude/settings
 
 - **guard.py** (PreToolUse → Write|Edit): Blocks edits to `.env`, `wallet.enc`, `idl/`, and credential files (`.pem`, `.key`, `.secret`). Edit these files manually.
 - **lint.py** (PostToolUse → Write|Edit): Runs `ruff format` + `ruff check --fix` on every edited `.py` file. If unfixable errors remain, you will see them as errors — fix them before moving on.
-- **bash-guard.py** (PreToolUse → Bash): Advisory only — prints warnings (never blocks) when commands send Solana transactions, run mainnet tests, or delete sensitive files. The CLI must work unimpeded when run via assistants or automated workflows.
+- **bash-guard.py** (PreToolUse → Bash): Blocks `git add` of `docs/*.md` (exit 2). Otherwise advisory: adds a note to Claude's context (JSON `additionalContext`, never blocks) when commands send Solana transactions, run mainnet tests, or delete sensitive files. The CLI must work unimpeded when run via assistants or automated workflows.
 
 ## Boundaries
 
