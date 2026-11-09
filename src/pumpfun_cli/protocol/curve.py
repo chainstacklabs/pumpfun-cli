@@ -102,6 +102,31 @@ def calculate_sell_quote_out(state: dict, token_amount: int) -> int:
     )
 
 
+def max_sell_within_real_reserves(state: dict, token_amount: int) -> int:
+    """The largest part of `token_amount` the curve has the quote to pay for.
+
+    The program prices a sell on the virtual reserves but pays it, fees
+    included, out of `real_quote_reserves`, and a payout above that reverts.
+    On a mayhem-mode coin the two drift apart, so the curve can hold far less
+    than its price promises. Returns `token_amount` when the curve can pay for
+    all of it, else the most raw tokens whose payout still fits, and 0 when
+    the payout would be nothing either way.
+    """
+    virtual_tokens = state["virtual_token_reserves"]
+    virtual_quote = state["virtual_quote_reserves"]
+    real_quote = state["real_quote_reserves"]
+    payout = calculate_sell_quote_out(state, token_amount)
+    if payout <= real_quote:
+        # A sell paid nothing reverts on its floor of at least one unit.
+        return token_amount if payout > 0 else 0
+    # The payout rounds down, so it fits while
+    # amount * virtual_quote < (real_quote + 1) * (virtual_tokens + amount).
+    # virtual_quote > real_quote + 1 here, or the full sell would have fit.
+    bound = (real_quote + 1) * virtual_tokens - 1
+    sellable = min(token_amount, bound // (virtual_quote - real_quote - 1))
+    return sellable if calculate_sell_quote_out(state, sellable) > 0 else 0
+
+
 def get_token_price(state: dict, quote_decimals: int) -> float:
     """Current price in whole quote units per whole token."""
     if state["virtual_token_reserves"] == 0:

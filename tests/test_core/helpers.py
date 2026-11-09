@@ -1,6 +1,9 @@
 """Shared test helpers: real account layouts and an in-memory RPC client."""
 
+import base64
+import json
 import struct
+from pathlib import Path
 from types import SimpleNamespace
 
 from solders.pubkey import Pubkey
@@ -44,7 +47,7 @@ def build_curve_data(
     virtual_token: int = 1_000_000_000_000_000,
     virtual_quote: int = 30_000_000_000,
     real_token: int = 793_100_000_000_000,
-    real_quote: int = 0,
+    real_quote: int = 1_000_000_000,
     supply: int = 1_000_000_000_000_000,
     complete: bool = False,
     creator: Pubkey = CREATOR,
@@ -206,6 +209,24 @@ class FakeClient:
     async def get_token_account_balance(self, account: Pubkey) -> int:
         return self.token_balances.get(account, 0)
 
+    async def get_program_accounts(self, program_id: Pubkey, filters: list):
+        """Accounts owned by `program_id` that pass every dataSize/memcmp filter."""
+
+        def passes(data: bytes) -> bool:
+            for f in filters:
+                if isinstance(f, int):
+                    if len(data) != f:
+                        return False
+                elif data[f.offset : f.offset + 32] != bytes(Pubkey.from_string(f.bytes)):
+                    return False
+            return True
+
+        return [
+            SimpleNamespace(pubkey=address, account=account)
+            for address, account in self.accounts.items()
+            if account.owner == program_id and passes(account.data)
+        ]
+
     async def send_tx(
         self, instructions, signers, compute_units=100_000, priority_fee=200_000, confirm=False
     ):
@@ -278,3 +299,21 @@ def add_pool(
 
 def add_quote_control(client: FakeClient, entries: dict[Pubkey, int]) -> None:
     client.add(find_quote_control(), build_quote_control_data(entries), owner=Pubkey.new_unique())
+
+
+FIXTURES = Path(__file__).parents[1] / "fixtures"
+
+
+def add_launchlab_fixture(client: FakeClient, name: str) -> dict:
+    """Load a LaunchLab pool, its configs and mints as captured from mainnet.
+
+    Returns each account's address by role (pool, base_mint, quote_mint, ...).
+    """
+    bundle = json.loads((FIXTURES / name).read_text())
+    for account in bundle.values():
+        client.add(
+            Pubkey.from_string(account["address"]),
+            base64.b64decode(account["data"]),
+            owner=Pubkey.from_string(account["owner"]),
+        )
+    return {role: Pubkey.from_string(account["address"]) for role, account in bundle.items()}

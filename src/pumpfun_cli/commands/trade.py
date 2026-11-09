@@ -4,6 +4,8 @@ import asyncio
 
 import typer
 
+from pumpfun_cli.core.cpmm import buy_cpmm, sell_cpmm
+from pumpfun_cli.core.launchlab import buy_launchlab, sell_launchlab
 from pumpfun_cli.core.pumpswap import buy_pumpswap, sell_pumpswap
 from pumpfun_cli.core.trade import (
     buy_token,
@@ -20,6 +22,35 @@ from pumpfun_cli.core.trade import (
     collect_creator_fees as collect_creator_fees_core,
 )
 from pumpfun_cli.output import error, render
+
+
+def _route(curve, amm, launchlab, cpmm, force_amm: bool, mint: str, call) -> dict:
+    """Trade where the coin lives.
+
+    pump.fun's curve, then PumpSwap once it has graduated; a LaunchLab curve
+    when pump.fun has no such coin, then Raydium CPMM once that has graduated.
+    `--force-amm` goes straight to the pool: PumpSwap, or CPMM for a LaunchLab
+    coin. `call(fn)` runs one venue's core function with the command's arguments.
+    """
+    if force_amm:
+        result = call(amm)
+        if result.get("pool_missing"):
+            # No PumpSwap pool: a LaunchLab coin trades on CPMM. Unless CPMM
+            # recognises the coin, PumpSwap's own error stands.
+            pool_result = call(cpmm)
+            if pool_result.get("error") not in ("not_found", "cpmm_error"):
+                return pool_result
+        return result
+    result = call(curve)
+    if result.get("error") == "graduated":
+        return call(amm)
+    if result.get("error") == "not_found":
+        result = call(launchlab)
+        if result.get("error") == "graduated":
+            return call(cpmm)
+        if result.get("error") == "not_found":
+            result["message"] = f"No pump.fun or LaunchLab coin found for {mint}."
+    return result
 
 
 def _get_overrides(ctx: typer.Context) -> dict:
@@ -75,7 +106,9 @@ def buy(
         15, "--slippage", help="Slippage tolerance percent (default: 15)"
     ),
     force_amm: bool = typer.Option(
-        False, "--force-amm", help="Skip bonding curve, buy directly on PumpSwap AMM"
+        False,
+        "--force-amm",
+        help="Skip the bonding curve, buy in the pool (PumpSwap, or CPMM for LaunchLab coins)",
     ),
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
     dry_run: bool = typer.Option(
@@ -90,9 +123,15 @@ def buy(
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
-        if force_amm:
-            result = asyncio.run(
-                buy_pumpswap(
+        result = _route(
+            buy_token,
+            buy_pumpswap,
+            buy_launchlab,
+            buy_cpmm,
+            force_amm,
+            mint,
+            lambda fn: asyncio.run(
+                fn(
                     rpc,
                     keyfile,
                     password,
@@ -103,35 +142,8 @@ def buy(
                     dry_run=dry_run,
                     **overrides,
                 )
-            )
-        else:
-            result = asyncio.run(
-                buy_token(
-                    rpc,
-                    keyfile,
-                    password,
-                    mint,
-                    amount,
-                    slippage,
-                    confirm=confirm,
-                    dry_run=dry_run,
-                    **overrides,
-                )
-            )
-            if result.get("error") == "graduated":
-                result = asyncio.run(
-                    buy_pumpswap(
-                        rpc,
-                        keyfile,
-                        password,
-                        mint,
-                        amount,
-                        slippage,
-                        confirm=confirm,
-                        dry_run=dry_run,
-                        **overrides,
-                    )
-                )
+            ),
+        )
     except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("dry_run"):
@@ -170,7 +182,9 @@ def sell(
         15, "--slippage", help="Slippage tolerance percent (default: 15)"
     ),
     force_amm: bool = typer.Option(
-        False, "--force-amm", help="Skip bonding curve, sell directly on PumpSwap AMM"
+        False,
+        "--force-amm",
+        help="Skip the bonding curve, sell in the pool (PumpSwap, or CPMM for LaunchLab coins)",
     ),
     confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
     dry_run: bool = typer.Option(
@@ -183,9 +197,15 @@ def sell(
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
-        if force_amm:
-            result = asyncio.run(
-                sell_pumpswap(
+        result = _route(
+            sell_token,
+            sell_pumpswap,
+            sell_launchlab,
+            sell_cpmm,
+            force_amm,
+            mint,
+            lambda fn: asyncio.run(
+                fn(
                     rpc,
                     keyfile,
                     password,
@@ -196,35 +216,8 @@ def sell(
                     dry_run=dry_run,
                     **overrides,
                 )
-            )
-        else:
-            result = asyncio.run(
-                sell_token(
-                    rpc,
-                    keyfile,
-                    password,
-                    mint,
-                    amount,
-                    slippage,
-                    confirm=confirm,
-                    dry_run=dry_run,
-                    **overrides,
-                )
-            )
-            if result.get("error") == "graduated":
-                result = asyncio.run(
-                    sell_pumpswap(
-                        rpc,
-                        keyfile,
-                        password,
-                        mint,
-                        amount,
-                        slippage,
-                        confirm=confirm,
-                        dry_run=dry_run,
-                        **overrides,
-                    )
-                )
+            ),
+        )
     except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("dry_run"):
@@ -243,6 +236,8 @@ def sell(
                 f"  Min out:         {result['min_quote_out']:.6f} {symbol}"
                 f" ({result['slippage_pct']}% slippage)"
             )
+            if "tokens_kept" in result:
+                typer.echo(f"  Kept:            {result['tokens_kept']:.6f} (curve can't pay)")
         return
     if result.get("error"):
         code = 3 if result["error"] in ("graduated", "slippage", "no_tokens") else 1
@@ -253,6 +248,11 @@ def sell(
             f"Sold {result['tokens_sold']:.2f} tokens"
             f" for {result['quote_received']:.6f} {result['quote_symbol']}"
         )
+        if "tokens_kept" in result:
+            typer.echo(
+                f"Kept {result['tokens_kept']:.2f} tokens: the bonding curve's real"
+                " reserves can't pay for them now."
+            )
         typer.echo(f"TX: {result['explorer']}")
 
 

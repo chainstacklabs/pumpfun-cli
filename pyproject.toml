@@ -1,7 +1,7 @@
 [project]
 name = "pumpfun-cli"
-version = "0.2.0"
-description = "CLI for pump.fun on Solana — trade, launch, and browse tokens"
+version = "0.3.0"
+description = "CLI for pump.fun and Raydium LaunchLab on Solana — trade, launch, and browse tokens"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"

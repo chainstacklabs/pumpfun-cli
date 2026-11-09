@@ -52,8 +52,8 @@ src/pumpfun_cli/
 ├── crypto.py           # AES-256-GCM wallet encryption (scrypt KDF)
 ├── output.py           # render() + error() — TTY-aware output
 ├── commands/           # Thin CLI layer (config, info, launch, tokens, trade, tx_status, wallet)
-├── core/               # Business logic (config, info, launch, pumpswap, tokens, trade, tx_status, validate, wallet)
-└── protocol/           # Solana primitives (address, client, contracts, curve, idl_parser, instructions, pumpswap, quote)
+├── core/               # Business logic (config, cpmm, info, launch, launchlab, pumpswap, tokens, trade, tx_status, validate, wallet)
+└── protocol/           # Solana primitives (address, client, contracts, cpmm, curve, idl_parser, instructions, launchlab, pumpswap, quote)
 
 tests/
 ├── test_commands/      # CLI smoke tests
@@ -68,7 +68,7 @@ tests/
 
 **Error handling:** `error()` raises `SystemExit` — code after it is unreachable. Core functions return `dict` with `"error"` key for expected failures (graduated tokens, not found, slippage exceeded, insufficient_balance). Catch `ValueError` for wrong wallet password in every command that decrypts. Buy/sell functions perform pre-trade balance validation — SOL for fees and rent, the quote asset for the spend, token balance for sells with specific amounts.
 
-**Auto-routing:** When `buy_token` / `sell_token` returns `{"error": "graduated"}`, the command layer in `commands/trade.py` automatically retries via `buy_pumpswap` / `sell_pumpswap` (PumpSwap AMM). Never suppress or swallow the `"graduated"` error in core — the routing decision belongs in the command layer.
+**Auto-routing:** `_route` in `commands/trade.py` picks the venue from the errors core returns: `{"error": "graduated"}` from `buy_token` / `sell_token` retries on PumpSwap, `{"error": "not_found"}` retries on LaunchLab (`buy_launchlab` / `sell_launchlab`), and LaunchLab's `graduated` retries on Raydium CPMM (`buy_cpmm` / `sell_cpmm`). `--force-amm` tries PumpSwap and falls back to CPMM only when PumpSwap reports no pool (`pool_missing`); PumpSwap's error stands unless CPMM recognises the coin as LaunchLab's. Never suppress or swallow those errors in core — the routing decision belongs in the command layer. `info` falls back to LaunchLab, and to its CPMM pool, the same way in `core/info.py`.
 
 **Imports:** stdlib → third-party → local. Example:
 ```python
@@ -130,6 +130,21 @@ lists; these are the ones this CLI depends on.
   pool, then `pool-v2` **only on a canonical pool** (`coin_creator` set), then the
   buyback recipient and its quote ATA last. The canonical pool is derived from the
   mint and the curve's quote mint.
+- `migrate_v2` also carries accounts the IDL omits: after its 27, the new pool's
+  boost vault authority (`["boost_vault", pool]` on PumpSwap) and that
+  authority's quote token account. Without them PumpSwap reverts with 6027.
+- LaunchLab (`protocol/launchlab.py`) pools are keyed by base and quote mint.
+  The SOL pool is derived; any other quote is found by `getProgramAccounts`
+  on the base mint (PoolState offset 205). Swaps are the IDL's 15 accounts plus
+  the system program and the platform and creator fee vaults
+  (`[platform_config, quote]`, `[creator, quote]`). The curve fee is
+  GlobalConfig's trade fee plus PlatformConfig's fee and creator fee, read
+  live; a Token-2022 coin's transfer fee comes off what arrives.
+- A graduated LaunchLab coin's CPMM pool (`protocol/cpmm.py`) is derived from
+  its PlatformConfig's `cpswap_config` and the two mints sorted by bytes.
+  Reserves are the vault balances less the protocol, fund and creator fees the
+  pool still owes. Both sides are `swap_base_input`, input token's accounts
+  first. `migrate_type` 0 (AMM v4) is refused.
 - `send_tx` sends v0 and falls back to v1 when the transaction exceeds 1232
   bytes (a cashback-pool buy, a launch with a buy). v1 carries the compute budget
   in its header.

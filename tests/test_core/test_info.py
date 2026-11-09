@@ -22,12 +22,13 @@ def _patched(client):
     return (
         patch("pumpfun_cli.core.info.RpcClient", return_value=client),
         patch("pumpfun_cli.core.pumpswap.RpcClient", return_value=client),
+        patch("pumpfun_cli.core.launchlab.RpcClient", return_value=client),
     )
 
 
 async def _info(client, mint=MINT_STR):
-    a, b = _patched(client)
-    with a, b:
+    a, b, c = _patched(client)
+    with a, b, c:
         return await get_token_info("http://rpc", mint)
 
 

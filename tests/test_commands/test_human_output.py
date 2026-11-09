@@ -52,6 +52,23 @@ def test_buy_and_sell_name_the_quote_asset(wallet):
     assert sold.exit_code == 0 and "4.500000 USDC" in sold.output
 
 
+def test_a_capped_sell_says_what_it_kept(wallet):
+    with (
+        _human("trade"),
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as sell,
+    ):
+        sell.return_value = {
+            "action": "sell",
+            "quote_symbol": "SOL",
+            "quote_received": 0.001,
+            "tokens_sold": 6.0,
+            "tokens_kept": 4.0,
+            "explorer": "x",
+        }
+        sold = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all"])
+    assert sold.exit_code == 0 and "Kept 4.00 tokens" in sold.output
+
+
 def test_dry_runs(wallet):
     common = {
         "dry_run": True,
@@ -285,3 +302,34 @@ def test_tokens_listing_survives_an_rpc_failure(monkeypatch):
     assert result.exit_code == 0
     assert table.called
     assert "Could not read prices from chain" in result.output
+
+
+@pytest.mark.parametrize("graduated", [False, True])
+def test_info_for_a_launchlab_coin(wallet, graduated):
+    info = {
+        "mint": MINT,
+        "venue": "launchlab",
+        "platform": "StonkFun",
+        "quote_mint": MINT,
+        "quote_symbol": "USDC",
+        "launchlab_pool": "pool",
+        "price": 0.001,
+        "bonding_progress": 40.0,
+        "graduated": graduated,
+        "real_quote_reserves": 12.5,
+        "creator": "c",
+        "curve_fee_pct": 1.25,
+        "transfer_fee_bps": 100,
+    }
+    if graduated:
+        # A pool address without its reserves, as when the pool lookup failed.
+        info.update(migrate_type="cpmm", pool_address="cpmm-pool")
+    with (
+        _human("info"),
+        patch("pumpfun_cli.commands.info.get_token_info", new_callable=AsyncMock) as get,
+    ):
+        get.return_value = info
+        shown = runner.invoke(app, ["--rpc", "http://rpc", "info", MINT])
+    assert shown.exit_code == 0, shown.output
+    assert "StonkFun (Raydium LaunchLab)" in shown.output
+    assert "Transfer fee:     100 bps" in shown.output
