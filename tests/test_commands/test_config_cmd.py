@@ -80,3 +80,24 @@ def test_config_get_json_trailing(tmp_path, monkeypatch):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data == {"key": "rpc", "value": "https://example.com"}
+
+
+def test_config_set_rejects_unknown_key(tmp_path, monkeypatch):
+    """A typo'd key is refused, lists the valid keys, and is not saved."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["config", "set", "rpcc", "https://example.com"])
+    assert result.exit_code == 2
+    assert "Unknown config key: rpcc" in result.output
+    assert "compute_units, keyfile, priority_fee, rpc" in result.output
+    assert not (tmp_path / "pumpfun-cli" / "config.toml").exists()
+
+
+def test_config_delete_still_removes_unknown_key(tmp_path, monkeypatch):
+    """A typo saved by an older version can still be deleted."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    config_dir = tmp_path / "pumpfun-cli"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text('rpcc = "https://example.com"\n')
+    result = runner.invoke(app, ["config", "delete", "rpcc"])
+    assert result.exit_code == 0
+    assert (config_dir / "config.toml").read_text().strip() == ""

@@ -120,6 +120,8 @@ async def transfer_sol(
     if recipient is None:
         return invalid_pubkey_error(recipient_str, "recipient address")
     lamports = to_raw(sol_amount, SOL_DECIMALS)
+    if lamports <= 0:
+        return {"error": "invalid_amount", "message": "Amount is less than 1 lamport."}
     client = RpcClient(rpc_url)
     try:
         ix = transfer(
