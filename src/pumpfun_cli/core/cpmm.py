@@ -21,7 +21,11 @@ from pumpfun_cli.core.trade import DEFAULT_PRIORITY_FEE, _handle_tx_error
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import find_ata
-from pumpfun_cli.protocol.client import RpcClient, TransactionFailedError
+from pumpfun_cli.protocol.client import (
+    RpcClient,
+    TransactionFailedError,
+    TransactionUnconfirmedError,
+)
 from pumpfun_cli.protocol.cpmm import (
     CPMM_SLIPPAGE_ERROR_CODES,
     FEE_RATE_DENOMINATOR,
@@ -256,6 +260,9 @@ async def buy_cpmm(
         return result
     except _NoPool as exc:
         return exc.result
+    except TransactionUnconfirmedError as exc:
+        # Sent, so the message's signature must reach the user.
+        return {"error": "unconfirmed", "message": str(exc)}
     except (RuntimeError, ValueError) as exc:
         return {"error": "cpmm_error", "message": str(exc)}
     finally:
@@ -377,6 +384,9 @@ async def sell_cpmm(
         return result
     except _NoPool as exc:
         return exc.result
+    except TransactionUnconfirmedError as exc:
+        # Sent, so the message's signature must reach the user.
+        return {"error": "unconfirmed", "message": str(exc)}
     except (RuntimeError, ValueError) as exc:
         return {"error": "cpmm_error", "message": str(exc)}
     finally:
@@ -400,6 +410,9 @@ async def get_cpmm_info(rpc_url: str, mint_str: str, rpc_timeout: float = 30.0) 
         }
     except _NoPool as exc:
         return exc.result
+    except TransactionUnconfirmedError as exc:
+        # Sent, so the message's signature must reach the user.
+        return {"error": "unconfirmed", "message": str(exc)}
     except (RuntimeError, ValueError) as exc:
         return {"error": "cpmm_error", "message": str(exc)}
     finally:

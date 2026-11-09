@@ -75,6 +75,10 @@ _ERR_PATTERNS = (
 )
 
 
+class TransactionUnconfirmedError(RuntimeError):
+    """Raised when a sent transaction can't be confirmed; it may still land."""
+
+
 class TransactionFailedError(RuntimeError):
     """Raised when a confirmed transaction fails on-chain."""
 
@@ -182,7 +186,7 @@ class RpcClient:
                 )
                 status = await self.get_transaction(signature)
             except Exception as exc:  # noqa: BLE001 - the send already happened
-                raise RuntimeError(
+                raise TransactionUnconfirmedError(
                     f"Sent {signature} but could not confirm it ({type(exc).__name__}). "
                     f"Check it with: pumpfun tx-status {signature}"
                 ) from None

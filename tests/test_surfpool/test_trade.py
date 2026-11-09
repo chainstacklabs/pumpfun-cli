@@ -184,7 +184,7 @@ async def test_sell_caps_at_the_curves_real_reserves(
         data = bytearray((await client.get_account_info(curve_pda)).value.data)
         struct.pack_into("<Q", data, 32, 10_000_000)  # real_quote_reserves: 0.01 SOL
         async with httpx.AsyncClient() as http:
-            await http.post(
+            resp = await http.post(
                 surfpool_rpc,
                 json={
                     "jsonrpc": "2.0",
@@ -193,6 +193,8 @@ async def test_sell_caps_at_the_curves_real_reserves(
                     "params": [str(curve_pda), {"data": bytes(data).hex()}],
                 },
             )
+            resp.raise_for_status()
+            assert "error" not in resp.json(), resp.json()
         curve = parse_bonding_curve(bytes((await client.get_account_info(curve_pda)).value.data))
         assert curve["real_quote_reserves"] == 10_000_000
 

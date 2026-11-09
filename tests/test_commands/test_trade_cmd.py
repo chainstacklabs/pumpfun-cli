@@ -1229,3 +1229,19 @@ def test_force_amm_on_a_pump_coin_never_tries_cpmm(tmp_path, monkeypatch, amm_re
         tmp_path, monkeypatch, "buy", ["--force-amm", _FAKE_MINT, "0.01"], {"amm": amm_result}
     )
     mocks["cpmm"].assert_not_called()
+
+
+def test_force_amm_reports_an_unconfirmed_cpmm_trade(tmp_path, monkeypatch):
+    """A CPMM trade that was sent but not confirmed keeps its signature."""
+    out, _ = _run_routed(
+        tmp_path,
+        monkeypatch,
+        "buy",
+        ["--force-amm", _FAKE_MINT, "0.01"],
+        {
+            "amm": _NO_PUMPSWAP_POOL,
+            "cpmm": {"error": "unconfirmed", "message": "Sent abc123 but could not confirm it"},
+        },
+    )
+    assert out.exit_code == 1
+    assert "abc123" in out.output

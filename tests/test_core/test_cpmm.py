@@ -181,3 +181,14 @@ async def test_token_info_shows_the_cpmm_pool_of_a_graduated_coin():
     assert info["launchlab_pool"] == str(roles["launchlab_pool"])
     assert info["pool_address"] == str(roles["cpmm_pool"])
     assert info["base_reserves"] == pool["base_reserve"] / 10**6
+
+
+async def test_a_sent_but_unconfirmed_trade_keeps_its_signature(tmp_keystore):
+    from pumpfun_cli.protocol.client import TransactionUnconfirmedError
+
+    client, roles, _ = _chain(SOL_FIXTURE)
+    client.send_error = TransactionUnconfirmedError("Sent abc123 but could not confirm it")
+    mint = str(roles["base_mint"])
+    result = await _call(client, buy_cpmm, "http://rpc", tmp_keystore, "testpass", mint, 0.01)
+    assert result["error"] == "unconfirmed"
+    assert "abc123" in result["message"]
