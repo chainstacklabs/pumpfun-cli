@@ -1,6 +1,6 @@
 # pumpfun-cli
 
-A standalone command-line tool for launching and trading tokens with the [pump.fun](https://pump.fun).
+A standalone command-line tool for launching and trading tokens on [pump.fun](https://pump.fun), and for trading coins launched on Raydium LaunchLab (letsbonk.fun, StonkFun and other launchpads).
 
 Built from experience developing [pumpfun-bot](https://github.com/chainstacklabs/pumpfun-bonkfun-bot), distilled into a stateless CLI designed for humans, scripts, and LLM agents alike.
 
