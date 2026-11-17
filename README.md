@@ -90,7 +90,7 @@ pump.fun no longer accepts anonymous metadata uploads, so `launch` takes the URI
 
 ```
 Token info (requires RPC):
-  pumpfun info <mint>                     Venue, price, bonding progress, reserves
+  pumpfun info <mint> [--timeout S]       Venue, price, bonding progress, reserves
 
 Trading (requires RPC + wallet):
   pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--confirm]
@@ -113,17 +113,17 @@ Token discovery (price and progress added when an RPC is set):
   pumpfun tokens new [--limit N]          Recently launched
   pumpfun tokens graduating [--limit N]   Closest to bonding curve completion
   pumpfun tokens recommended [--limit N]  Recommended by pump.fun (at most 10)
-  pumpfun tokens search <query>           Search by name or ticker
+  pumpfun tokens search <query> [--limit N]  Search by name or ticker
 
 Wallet management:
   pumpfun wallet create                   Generate + encrypt keypair
   pumpfun wallet import <keypair.json>    Import existing keypair
   pumpfun wallet show                     Display public key
-  pumpfun wallet balance                  SOL + token balances
+  pumpfun wallet balance                  SOL balance
   pumpfun wallet tokens                   Token accounts with balances
   pumpfun wallet transfer <to> <amount>   Transfer SOL or tokens (--mint for SPL)
   pumpfun wallet close-atas               Close empty token accounts, recover rent
-  pumpfun wallet drain <recipient>        Close all ATAs + transfer remaining SOL
+  pumpfun wallet drain <recipient>        Close empty ATAs + transfer remaining SOL
   pumpfun wallet export --output <path>   Export as Solana keypair JSON
 
 Config:
@@ -193,13 +193,14 @@ A pump.fun bonding curve pays a sell out of its real reserves, which on some coi
 | `tokens recommended` | `frontend-api-v3.pump.fun/coins/recommendations` | HTTPS |
 | `tokens search` | `frontend-api-v3.pump.fun/coins/search-unrestricted` | HTTPS |
 | `tokens *` with an RPC set | + Solana RPC (`getMultipleAccounts` for the bonding curves) | JSON-RPC |
-| `wallet balance` | Solana RPC (`getBalance`, `getTokenAccountsByOwner`) | JSON-RPC |
+| `wallet balance` | Solana RPC (`getBalance`) | JSON-RPC |
+| `wallet tokens` | Solana RPC (`getTokenAccountsByOwner`) | JSON-RPC |
 | `wallet transfer` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `wallet drain` | Solana RPC (`getTokenAccountsByOwner`, `sendTransaction`) | JSON-RPC |
 | `wallet create/show/import/export` | None (local keystore only) | — |
 | `config *` | None (local config file only) | — |
 
-The `tokens` listings use pump.fun's frontend API, which is unofficial and changes without notice; it currently refuses non-browser clients ([#33](https://github.com/chainstacklabs/pumpfun-cli/issues/33)). Listings are narrowed to pump.fun coins on Solana, and price and bonding progress come from the chain, so they need an RPC endpoint.
+The `tokens` listings use pump.fun's frontend API, which is unofficial and changes without notice. Listings are narrowed to pump.fun coins on Solana, and price and bonding progress come from the chain, so they need an RPC endpoint.
 
 ## Throughput and rate limits
 
@@ -234,7 +235,7 @@ For transactions against real program state, the integration tests use [Surfpool
 
 ## IDLs
 
-The pump.fun IDLs under [`idl/`](idl/) match those in [pumpfun-bonkfun-bot](https://github.com/chainstacklabs/pumpfun-bonkfun-bot), and `raydium_launchlab_idl.json` is copied from it; keep them in sync when the programs change. The IDLs under-report a few account lists (PumpSwap's swaps, pump.fun's `migrate_v2`); [CLAUDE.md](CLAUDE.md) lists what they leave out.
+The pump.fun IDLs under [`idl/`](idl/) match those in [pumpfun-bonkfun-bot](https://github.com/chainstacklabs/pumpfun-bonkfun-bot), and `raydium_launchlab_idl.json` is copied from it; keep them in sync when the programs change. The IDLs under-report a few account lists (PumpSwap's swaps, pump.fun's `migrate_v2`); [AGENTS.md](AGENTS.md) lists what they leave out.
 
 ## Architecture
 
@@ -249,17 +250,14 @@ commands/  →  core/  →  protocol/
 
 ## Agentic coding
 
-This repo is configured for AI coding agents via the `.claude/` directory:
-
-- **`CLAUDE.md`** — project context, commands, conventions and boundaries. `AGENTS.md` is a symlink to it, so Claude Code, Codex, Cursor and Copilot read the same guide.
-- **`hooks/`** — auto-lint on edit, guard against writing secrets, warn on transaction commands
-- **`skills/`** — [Agent Skills](https://agentskills.io/home) for repeatable workflows:
+- **[`AGENTS.md`](AGENTS.md)** — project context, commands, conventions and boundaries for any coding agent: Claude Code, Codex, Cursor, Copilot and others read it.
+- **`.claude/hooks/`** — Claude Code hooks: ruff on every edited Python file, a block on edits to `.env`, wallet, key and IDL files, and a warning before commands that send transactions.
+- **`.claude/skills/`** — [Agent Skills](https://agentskills.io/home) for running the tests:
 
 | Skill | Purpose |
 |-------|---------|
-| `run-unit-and-surfpool-tests` | Run unit tests + optional Surfpool integration tests |
-| `run-mainnet-e2e-tests` | Run end-to-end tests against Solana mainnet (costs real SOL) |
-| `work-item` | Investigate, plan, implement (TDD), verify, and finalize work items as PRs |
+| `run-unit-and-surfpool-tests` | Unit tests, plus Surfpool integration tests when Surfpool is installed |
+| `run-mainnet-e2e-tests` | End-to-end tests on Solana mainnet; trading groups spend real SOL |
 
 ## Contributing
 

@@ -86,7 +86,6 @@ When tests fail, use this decision tree to diagnose:
 
 ## Known Behaviors
 
-- **Expected xfail:** `test_buy_then_sell_pumpswap` is marked `@pytest.mark.xfail` because PumpSwap buy/sell on forked state often hits slippage issues. If it xfails, that's normal.
 - **surfpool-test.sh** uses `uv run python3` (not bare `python3`) because solders/solana packages are in the uv venv.
 
 ## Interpreting Results
