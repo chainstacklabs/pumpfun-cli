@@ -70,7 +70,11 @@ async def test_boards_keep_only_pump_coins(respx_mock, fn, board):
     tokens = await fn(limit=5)
     assert [t["symbol"] for t in tokens] == ["ONE", "TWO"]
     assert route.call_count == 1  # a short page is the end of the board
-    assert route.calls.last.request.headers["user-agent"].startswith("pumpfun-cli")
+    headers = route.calls.last.request.headers
+    assert headers["user-agent"].startswith("pumpfun-cli")
+    # pump.fun answers 403 without these two.
+    assert headers["origin"] == "https://pump.fun"
+    assert headers["accept-language"]
 
 
 async def test_board_pages_until_the_limit(respx_mock):
