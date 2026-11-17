@@ -3,8 +3,12 @@
 from solders.pubkey import Pubkey
 
 # pump.fun's HTTP endpoints sit behind Cloudflare, which rejects the default
-# python-httpx User-Agent; an identifying one is accepted.
-HTTP_HEADERS = {"User-Agent": "pumpfun-cli (+https://github.com/chainstacklabs/pumpfun-cli)"}
+# python-httpx User-Agent and any request without an Origin and Accept-Language.
+HTTP_HEADERS = {
+    "User-Agent": "pumpfun-cli (+https://github.com/chainstacklabs/pumpfun-cli)",
+    "Origin": "https://pump.fun",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 # Solana constants
 LAMPORTS_PER_SOL = 1_000_000_000
