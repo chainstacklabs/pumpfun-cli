@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from solders.keypair import Keypair
-from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
@@ -304,6 +303,12 @@ async def transfer_token(
         await client.close()
 
 
+# Closes per transaction, and compute units for each: a close, or a harvest of
+# withheld transfer fees and a close.
+_CLOSE_BATCH = 20
+_CLOSE_COMPUTE_UNITS = 5_000
+
+
 async def close_empty_atas(
     rpc_url: str,
     keystore_path: str,
@@ -312,53 +317,64 @@ async def close_empty_atas(
     priority_fee: int | None = None,
     compute_units: int | None = None,
 ) -> dict:
-    from solders.instruction import AccountMeta, Instruction
+    """Close the wallet's empty token accounts, up to 20 per run, and recover their rent.
 
+    Withheld Token-2022 transfer fees go to the mint first. An account the
+    wallet can't close (frozen, or with another close authority) is left and
+    listed in `skipped`, since one failed close would revert the batch.
+    """
     from pumpfun_cli.protocol.client import RpcClient
-    from pumpfun_cli.protocol.contracts import TOKEN_2022_PROGRAM, TOKEN_PROGRAM
+    from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL, TOKEN_2022_PROGRAM, TOKEN_PROGRAM
+    from pumpfun_cli.protocol.token_account import build_close_emptied_account_instructions
 
     keypair = decrypt_keypair(Path(keystore_path), password)
     pubkey = keypair.pubkey()
     client = RpcClient(rpc_url)
     try:
-        all_accounts = await client.get_token_accounts_by_owner(pubkey, TOKEN_PROGRAM)
-        all_accounts += await client.get_token_accounts_by_owner(pubkey, TOKEN_2022_PROGRAM)
-        empty = [a for a in all_accounts if a["amount"] == 0]
-        if not empty:
-            return {"closed": 0, "recovered_sol": 0.0, "signature": None}
+        closable, skipped = [], []
+        for program in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
+            for account, mint, holding in await client.get_token_holdings(pubkey, program):
+                if holding.amount:
+                    continue
+                if holding.closable_by(pubkey):
+                    closable.append((account, mint, program, holding))
+                else:
+                    reason = "frozen" if holding.frozen else "close_authority"
+                    skipped.append({"address": str(account), "mint": str(mint), "reason": reason})
+        result = {"closed": 0, "recovered_sol": 0.0, "signature": None}
+        if skipped:
+            result["skipped"] = skipped
+        batch = closable[:_CLOSE_BATCH]
+        if not batch:
+            return result
 
-        # Batch up to 20 close instructions per tx
         instructions = []
-        for acc in empty[:20]:
-            token_prog = Pubkey.from_string(acc["program"])
-            ata = Pubkey.from_string(acc["address"])
-            # SPL Token CloseAccount instruction (index 9)
-            ix = Instruction(
-                program_id=token_prog,
-                accounts=[
-                    AccountMeta(pubkey=ata, is_signer=False, is_writable=True),
-                    AccountMeta(pubkey=pubkey, is_signer=False, is_writable=True),
-                    AccountMeta(pubkey=pubkey, is_signer=True, is_writable=False),
-                ],
-                data=bytes([9]),
+        for account, mint, program, holding in batch:
+            instructions += build_close_emptied_account_instructions(
+                user=pubkey,
+                mint=mint,
+                account=account,
+                token_program=program,
+                withheld=holding.withheld,
             )
-            instructions.append(ix)
-
         sig = await client.send_tx(
             instructions,
             [keypair],
             confirm=confirm,
             priority_fee=priority_fee if priority_fee is not None else 200_000,
-            compute_units=compute_units if compute_units is not None else 100_000,
+            compute_units=compute_units
+            if compute_units is not None
+            else _CLOSE_COMPUTE_UNITS * len(batch),
         )
-        # Each ATA holds ~0.00203928 SOL rent
-        recovered = len(instructions) * 0.00203928
-        result = {
-            "closed": len(instructions),
-            "recovered_sol": round(recovered, 6),
-            "signature": sig,
-            "explorer": f"https://solscan.io/tx/{sig}",
-        }
+        recovered = sum(holding.lamports for *_, holding in batch)
+        result.update(
+            {
+                "closed": len(batch),
+                "recovered_sol": recovered / LAMPORTS_PER_SOL,
+                "signature": sig,
+                "explorer": f"https://solscan.io/tx/{sig}",
+            }
+        )
         if confirm:
             result["confirmed"] = True
         return result
@@ -428,6 +444,7 @@ async def drain_wallet(
         "ata_rent_recovered_sol": ata_result["recovered_sol"],
         "ata_signature": ata_result.get("signature"),
         "ata_error": ata_result.get("ata_error"),
+        "ata_skipped": ata_result.get("skipped", []),
         "sol_transferred": sol_result.get("sol_amount", 0),
         "sol_transferred_raw": sol_result.get("sol_amount_raw", 0),
         "sol_signature": sol_result.get("signature"),

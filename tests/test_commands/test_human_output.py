@@ -401,3 +401,21 @@ def test_info_for_a_launchlab_coin(wallet, graduated):
     assert shown.exit_code == 0, shown.output
     assert "StonkFun (Raydium LaunchLab)" in shown.output
     assert "Transfer fee:     100 bps" in shown.output
+
+
+def test_close_atas_reports_exact_rent_and_what_it_left(wallet):
+    with (
+        _human("wallet"),
+        patch("pumpfun_cli.commands.wallet.close_empty_atas", new_callable=AsyncMock) as close,
+    ):
+        close.return_value = {
+            "closed": 2,
+            "recovered_sol": 0.00355312,
+            "signature": "s",
+            "explorer": "x",
+            "skipped": [{"address": "a", "mint": "m", "reason": "frozen"}],
+        }
+        out = runner.invoke(app, ["--rpc", "http://rpc", "wallet", "close-atas"])
+    assert out.exit_code == 0
+    assert "Closed 2 empty account(s), recovered 0.003553 SOL" in out.output
+    assert "Left 1 empty account(s) this wallet can't close" in out.output

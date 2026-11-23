@@ -155,7 +155,8 @@ lists; these are the ones this CLI depends on.
   transaction (`close_if_emptied`), on every venue. Token-2022 won't close an
   account holding withheld transfer fees, so they are harvested to the mint
   first. An account whose close authority is another wallet, or a frozen one,
-  stays open.
+  stays open. `wallet close-atas` closes empty accounts the same way and lists
+  the ones it can't close in `skipped`, since one failed close reverts the batch.
 - `create_v2` rejects cashback (6082). A creator fee only applies on a coin
   priced in a `QuoteControl` mint, and mayhem coins must be SOL-priced; launch
   refuses both before sending.

@@ -145,6 +145,24 @@ class RpcClient:
             return TokenHolding()
         return parse_token_account(bytes(resp.value.data), resp.value.lamports)
 
+    async def get_token_holdings(
+        self, owner: Pubkey, token_program: Pubkey
+    ) -> list[tuple[Pubkey, Pubkey, TokenHolding]]:
+        """(account, mint, holding) for every `token_program` account `owner` owns,
+        as of "confirmed"; empty if the RPC can't answer."""
+        try:
+            resp = await self.rpc.get_token_accounts_by_owner(
+                owner, TokenAccountOpts(program_id=token_program), commitment="confirmed"
+            )
+        except Exception:
+            return []
+        rows = []
+        for item in resp.value:
+            data = bytes(item.account.data)
+            holding = parse_token_account(data, item.account.lamports)
+            rows.append((item.pubkey, Pubkey.from_bytes(data[:32]), holding))
+        return rows
+
     async def get_token_accounts_by_owner(
         self,
         owner: Pubkey,

@@ -309,9 +309,19 @@ def wallet_close_atas(
             typer.echo("No empty token accounts to close.")
         else:
             typer.echo(
-                f"Closed {result['closed']} empty account(s), recovered ~{result['recovered_sol']} SOL"
+                f"Closed {result['closed']} empty account(s),"
+                f" recovered {result['recovered_sol']:.6f} SOL"
             )
             typer.echo(f"TX: {result['explorer']}")
+        _echo_skipped(result.get("skipped", []))
+
+
+def _echo_skipped(skipped: list[dict]) -> None:
+    if skipped:
+        typer.echo(
+            f"Left {len(skipped)} empty account(s) this wallet can't close"
+            " (frozen, or another wallet holds the close authority)."
+        )
 
 
 @app.command("drain")
@@ -363,10 +373,11 @@ def wallet_drain(
     elif result["atas_closed"] > 0:
         typer.echo(
             f"Closed {result['atas_closed']} empty ATA(s),"
-            f" recovered ~{result['ata_rent_recovered_sol']} SOL"
+            f" recovered {result['ata_rent_recovered_sol']:.6f} SOL"
         )
     else:
         typer.echo("No empty ATAs to close.")
+    _echo_skipped(result.get("ata_skipped", []))
 
     if result.get("sol_error"):
         typer.echo(f"SOL transfer skipped: {result['sol_error']}")

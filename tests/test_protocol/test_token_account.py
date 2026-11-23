@@ -109,3 +109,15 @@ async def test_client_reads_a_missing_account_as_empty():
     client = RpcClient("http://rpc")
     client.rpc.get_account_info = AsyncMock(return_value=SimpleNamespace(value=None))
     assert await client.get_token_account(ACCOUNT) == TokenHolding()
+
+
+async def test_client_lists_the_owners_accounts_with_their_holdings():
+    client = RpcClient("http://rpc")
+    item = SimpleNamespace(
+        pubkey=ACCOUNT,
+        account=SimpleNamespace(data=_account(0, [(2, struct.pack("<Q", 5))]), lamports=9),
+    )
+    client.rpc.get_token_accounts_by_owner = AsyncMock(return_value=SimpleNamespace(value=[item]))
+    rows = await client.get_token_holdings(OWNER, TOKEN_2022_PROGRAM)
+    assert rows == [(ACCOUNT, MINT, TokenHolding(0, 5, 9, closer=OWNER))]
+    assert client.rpc.get_token_accounts_by_owner.call_args.kwargs["commitment"] == "confirmed"

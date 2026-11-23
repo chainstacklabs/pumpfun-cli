@@ -535,7 +535,12 @@ async def test_drain_wallet_happy_path(tmp_path):
         patch(
             "pumpfun_cli.core.wallet.close_empty_atas",
             new_callable=AsyncMock,
-            return_value={"closed": 3, "recovered_sol": 0.006118, "signature": "atasig"},
+            return_value={
+                "closed": 3,
+                "recovered_sol": 0.006118,
+                "signature": "atasig",
+                "skipped": [{"address": "a", "mint": "m", "reason": "frozen"}],
+            },
         ),
         patch(
             "pumpfun_cli.core.wallet.transfer_all_sol",
@@ -555,6 +560,7 @@ async def test_drain_wallet_happy_path(tmp_path):
     assert result["atas_closed"] == 3
     assert result["sol_transferred"] == 0.99
     assert result["ata_signature"] == "atasig"
+    assert result["ata_skipped"] == [{"address": "a", "mint": "m", "reason": "frozen"}]
     assert result["sol_signature"] == "solsig"
     assert result["non_empty_token_accounts"] == []
     assert result.get("ata_error") is None
@@ -626,6 +632,7 @@ async def test_drain_wallet_no_empty_atas(tmp_path):
         )
 
     assert result["atas_closed"] == 0
+    assert result["ata_skipped"] == []
     assert result["sol_transferred"] == 1.0
     assert result["sol_signature"] == "solsig2"
 
