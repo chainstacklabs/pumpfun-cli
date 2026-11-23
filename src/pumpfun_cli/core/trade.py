@@ -12,6 +12,7 @@ from spl.token.instructions import create_idempotent_associated_token_account
 
 from pumpfun_cli.core.amounts import (
     amount_fields,
+    close_if_emptied,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -327,11 +328,12 @@ async def sell_token(
         user = keypair.pubkey()
         user_ata = find_ata(user, mint, base_program)
 
+        holding = await client.get_token_account(user_ata)
+        actual_balance = holding.amount
         if amount_str.lower() == "all":
-            token_amount = await client.get_token_account_balance(user_ata)
+            token_amount = actual_balance
         else:
             token_amount = to_raw(amount_str, TOKEN_DECIMALS)
-            actual_balance = await client.get_token_account_balance(user_ata)
             if actual_balance < token_amount:
                 return {
                     "error": "insufficient_balance",
@@ -408,6 +410,15 @@ async def sell_token(
                 is_mayhem_mode=state["is_mayhem_mode"],
             )
         )
+        empty_ixs, closed = close_if_emptied(
+            user=user,
+            mint=mint,
+            account=user_ata,
+            token_program=base_program,
+            holding=holding,
+            sold=token_amount,
+        )
+        ixs.extend(empty_ixs)
 
         try:
             sig = await client.send_tx(
@@ -436,6 +447,7 @@ async def sell_token(
             **amount_fields("tokens_sold", token_amount, TOKEN_DECIMALS),
             quote_received=quote_out / 10**quote_decimals,
             **partial,
+            **closed,
         )
     finally:
         await client.close()

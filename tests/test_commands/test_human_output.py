@@ -67,6 +67,26 @@ def test_a_capped_sell_says_what_it_kept(wallet):
         }
         sold = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all"])
     assert sold.exit_code == 0 and "Kept 4.00 tokens" in sold.output
+    assert "token account" not in sold.output
+
+
+def test_a_sale_that_closes_the_account_says_so(wallet):
+    with (
+        _human("trade"),
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as sell,
+    ):
+        sell.return_value = {
+            "action": "sell",
+            "quote_symbol": "SOL",
+            "quote_received": 0.001,
+            "tokens_sold": 6.0,
+            "token_account_closed": True,
+            "rent_recovered_sol": 0.00207408,
+            "explorer": "x",
+        }
+        sold = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all"])
+    assert sold.exit_code == 0
+    assert "Closed the emptied token account: 0.002074 SOL rent back." in sold.output
 
 
 def test_dry_runs(wallet):

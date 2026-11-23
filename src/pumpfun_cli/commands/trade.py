@@ -253,6 +253,11 @@ def sell(
                 f"Kept {result['tokens_kept']:.2f} tokens: the bonding curve's real"
                 " reserves can't pay for them now."
             )
+        if result.get("token_account_closed"):
+            typer.echo(
+                f"Closed the emptied token account: {result['rent_recovered_sol']:.6f} SOL"
+                " rent back."
+            )
         typer.echo(f"TX: {result['explorer']}")
 
 

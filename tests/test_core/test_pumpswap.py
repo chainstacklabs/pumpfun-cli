@@ -27,8 +27,12 @@ from tests.test_core.helpers import (
     RESERVED_RECIPIENT,
     FakeClient,
     add_pool,
+    assert_closes,
+    assert_harvests,
     build_curve_data,
     chain_with_coin,
+    closed_accounts,
+    hold,
 )
 
 MINT_STR = str(COIN)
@@ -178,24 +182,32 @@ async def test_sell_all_non_canonical_decimals(tmp_keystore):
     client = FakeClient()
     client.add_mint(COIN, 9, TOKEN_PROGRAM)
     add_pool(client, coin_creator=None)
-    client.token_balances[find_ata(user, COIN, TOKEN_PROGRAM)] = 3_000_000_000
+    hold(client, user, COIN, 3_000_000_000, program=TOKEN_PROGRAM)
     with _patched(client):
         result = await sell_pumpswap("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
     assert result["tokens_sold"] == 3.0
     swap = _swap(client.sent[0])
     assert bytes(swap.data[:8]) == PUMPSWAP_SELL_DISCRIMINATOR
     assert derive_amm_pool_v2(COIN) not in [m.pubkey for m in swap.accounts]
+    # Selling everything closes the account, under the coin's own token program.
+    close = client.sent[0]["instructions"][-1]
+    assert_closes(close, find_ata(user, COIN, TOKEN_PROGRAM), user, TOKEN_PROGRAM)
+    assert result["token_account_closed"] is True
 
 
 async def test_sell_partial_and_insufficient(tmp_keystore):
     user = _user(tmp_keystore)
     client, _ = _graduated_chain()
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 2_000_000
+    hold(client, user, COIN, 2_000_000)
     with _patched(client):
         ok = await sell_pumpswap("http://rpc", tmp_keystore, "testpass", MINT_STR, "1.5")
         too_much = await sell_pumpswap("http://rpc", tmp_keystore, "testpass", MINT_STR, "3")
     assert int.from_bytes(bytes(_swap(client.sent[0]).data[8:16]), "little") == 1_500_000
     assert ok["tokens_sold"] == 1.5
+    # Tokens are left, so the account stays open.
+    ata = find_ata(user, COIN, TOKEN_2022_PROGRAM)
+    assert ata not in closed_accounts(client.sent[0]["instructions"])
+    assert "token_account_closed" not in ok
     assert too_much["error"] == "insufficient_balance"
 
 
@@ -260,3 +272,16 @@ async def test_sol_buy_wraps_ten_percent_headroom_exactly(tmp_keystore):
     create = next(i for i in client.sent[0]["instructions"] if i.program_id == SYSTEM_PROGRAM_ID)
     lamports = decode_create_account_with_seed(create)["lamports"]
     assert lamports - 2_039_280 == 319_000_000  # 0.29 SOL + 10%, rent on top
+
+
+async def test_sell_all_harvests_withheld_fees_then_closes(tmp_keystore):
+    user = _user(tmp_keystore)
+    ata = find_ata(user, COIN, TOKEN_2022_PROGRAM)
+    client, _ = _graduated_chain()
+    hold(client, user, COIN, 2_000_000, withheld=3)
+    with _patched(client):
+        result = await sell_pumpswap("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
+    *_, harvest, close = client.sent[0]["instructions"]
+    assert_harvests(harvest, COIN, ata)
+    assert_closes(close, ata, user, TOKEN_2022_PROGRAM)
+    assert result["token_account_closed"] is True

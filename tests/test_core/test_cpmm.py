@@ -11,7 +11,14 @@ from pumpfun_cli.protocol.client import TransactionFailedError
 from pumpfun_cli.protocol.contracts import TOKEN_2022_PROGRAM, TOKEN_PROGRAM
 from pumpfun_cli.protocol.cpmm import CPMM_PROGRAM, parse_cpmm_pool, swap_amount_out
 from pumpfun_cli.protocol.launchlab import withheld_fee
-from tests.test_core.helpers import FakeClient, add_launchlab_fixture
+from tests.test_core.helpers import (
+    FakeClient,
+    add_launchlab_fixture,
+    assert_closes,
+    assert_harvests,
+    closed_accounts,
+    hold,
+)
 
 SOL_FIXTURE = "cpmm_sol_pool.json"
 FEE_FIXTURE = "cpmm_transfer_fee_pool.json"
@@ -100,7 +107,8 @@ async def test_buy_needs_the_quote_asset(tmp_keystore):
 async def test_sell_withholds_the_transfer_fee_first(tmp_keystore):
     client, roles, pool = _chain(FEE_FIXTURE)
     user = _user(tmp_keystore)
-    client.token_balances[find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)] = 10**12
+    ata = find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)
+    hold(client, user, roles["base_mint"], 10**12, withheld=10**8)
     mint = str(roles["base_mint"])
     result = await _call(client, sell_cpmm, "http://rpc", tmp_keystore, "testpass", mint, "all")
     ix, amount_in, min_out = _swap(client)
@@ -112,6 +120,24 @@ async def test_sell_withholds_the_transfer_fee_first(tmp_keystore):
     # A sell inputs the coin: its account and vault come first.
     assert ix.accounts[4].pubkey == find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)
     assert ix.accounts[6].pubkey == pool["base_vault"]
+    # The emptied account gives up its withheld fees to the mint, then closes.
+    *_, harvest, close = client.sent[0]["instructions"]
+    assert_harvests(harvest, roles["base_mint"], ata)
+    assert_closes(close, ata, user, TOKEN_2022_PROGRAM)
+    assert result["token_account_closed"] is True
+
+
+async def test_a_partial_sell_leaves_the_account_open(tmp_keystore):
+    client, roles, _ = _chain(FEE_FIXTURE)
+    user = _user(tmp_keystore)
+    ata = find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)
+    hold(client, user, roles["base_mint"], 10**12, withheld=10**8)
+    mint = str(roles["base_mint"])
+    result = await _call(client, sell_cpmm, "http://rpc", tmp_keystore, "testpass", mint, "1000")
+    assert _swap(client)[1] == 10**9
+    assert ata not in closed_accounts(client.sent[0]["instructions"])
+    assert all(bytes(i.data) != bytes([26, 4]) for i in client.sent[0]["instructions"])
+    assert "token_account_closed" not in result
 
 
 async def test_dust_is_refused(tmp_keystore):

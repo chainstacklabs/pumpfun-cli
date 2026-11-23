@@ -53,7 +53,7 @@ src/pumpfun_cli/
 ├── output.py           # render() + error() — TTY-aware output
 ├── commands/           # Thin CLI layer (config, info, launch, tokens, trade, tx_status, wallet)
 ├── core/               # Business logic (config, cpmm, info, launch, launchlab, pumpswap, tokens, trade, tx_status, validate, wallet)
-└── protocol/           # Solana primitives (address, client, contracts, cpmm, curve, idl_parser, instructions, launchlab, pumpswap, quote)
+└── protocol/           # Solana primitives (address, client, contracts, cpmm, curve, idl_parser, instructions, launchlab, pumpswap, quote, token_account)
 
 tests/
 ├── test_commands/      # CLI smoke tests
@@ -151,6 +151,11 @@ lists; these are the ones this CLI depends on.
 - `send_tx` sends v0 and falls back to v1 when the transaction exceeds 1232
   bytes (a cashback-pool buy, a launch with a buy). v1 carries the compute budget
   in its header.
+- A sell that empties the wallet's token account closes it in the same
+  transaction (`close_if_emptied`), on every venue. Token-2022 won't close an
+  account holding withheld transfer fees, so they are harvested to the mint
+  first. An account whose close authority is another wallet, or a frozen one,
+  stays open.
 - `create_v2` rejects cashback (6082). A creator fee only applies on a coin
   priced in a `QuoteControl` mint, and mayhem coins must be SOL-priced; launch
   refuses both before sending.

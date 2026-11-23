@@ -10,6 +10,7 @@ from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.amounts import (
     amount_fields,
+    close_if_emptied,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -273,11 +274,12 @@ async def sell_pumpswap(
         user = keypair.pubkey()
         user_token_ata = find_ata(user, mint, tokens["base_token_program"])
 
+        holding = await client.get_token_account(user_token_ata)
+        actual_balance = holding.amount
         if amount_str.lower() == "all":
-            token_amount = await client.get_token_account_balance(user_token_ata)
+            token_amount = actual_balance
         else:
             token_amount = to_raw(amount_str, base_decimals)
-            actual_balance = await client.get_token_account_balance(user_token_ata)
             if actual_balance < token_amount:
                 return {
                     "error": "insufficient_balance",
@@ -336,6 +338,15 @@ async def sell_pumpswap(
             token_amount=token_amount,
             min_quote_out=min_quote_out,
         )
+        empty_ixs, closed = close_if_emptied(
+            user=user,
+            mint=mint,
+            account=user_token_ata,
+            token_program=tokens["base_token_program"],
+            holding=holding,
+            sold=token_amount,
+        )
+        ixs = [*ixs, *empty_ixs]
 
         try:
             sig = await client.send_tx(
@@ -357,6 +368,7 @@ async def sell_pumpswap(
             "quote_symbol": symbol,
             **amount_fields("tokens_sold", token_amount, base_decimals),
             "quote_received": expected_quote / 10**quote_decimals,
+            **closed,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }

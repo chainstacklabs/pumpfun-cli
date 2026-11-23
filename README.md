@@ -166,6 +166,10 @@ A LaunchLab coin priced in anything but SOL is found with `getProgramAccounts`, 
 
 Some LaunchLab coins (StonkFun reward coins, for example) are Token-2022 mints with a transfer fee, shown as `transfer_fee_bps` by `info`. A buy delivers that much less and a sell sends that much less into the pool. The CLI's amounts and slippage floors already count it.
 
+### Selling everything
+
+A sell that empties the coin's token account (`all`, or exactly the balance) closes the account in the same transaction and returns its rent: `token_account_closed` and `rent_recovered_sol` in the output. Withheld transfer fees in a Token-2022 account go to the mint first, since the account can't close while it holds them. A partial sell, a sell the curve can only partly pay for, or an account whose close authority is another wallet leaves the account open.
+
 ### Amounts in JSON output
 
 An exact amount comes twice: in whole units for reading (`tokens_sold`) and as the integer in raw units (`tokens_sold_raw`). Use the `_raw` field for anything that has to add up; the float can drop a unit. An amount known only as an estimate has no `_raw` twin: `quote_received`, the `collect-creator-fee` totals, and `tokens_received` unless the buy ran with `--confirm`, in which case it is read from the confirmed transaction. If that transaction cannot be read back, a confirmed buy also reports the estimate without `tokens_received_raw`, so check for the field. Dry-run fields (`expected_tokens_raw`, `expected_quote_raw`, `min_*_out_raw`) are exact integers of the quote the transaction would be built from, not executed amounts.

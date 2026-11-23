@@ -15,6 +15,7 @@ from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 
 from pumpfun_cli.protocol.contracts import TX_V1_LOADED_ACCOUNTS_DATA_LIMIT
+from pumpfun_cli.protocol.token_account import TokenHolding, parse_token_account
 
 DEFAULT_RPC_TIMEOUT = 30.0
 
@@ -133,6 +134,16 @@ class RpcClient:
         if resp.value:
             return int(resp.value.amount)
         return 0
+
+    async def get_token_account(self, token_account: Pubkey) -> TokenHolding:
+        """A token account as of "confirmed"; all zero if it does not exist."""
+        try:
+            resp = await self.rpc.get_account_info(token_account, commitment="confirmed")
+        except Exception:
+            return TokenHolding()
+        if not resp.value:
+            return TokenHolding()
+        return parse_token_account(bytes(resp.value.data), resp.value.lamports)
 
     async def get_token_accounts_by_owner(
         self,
