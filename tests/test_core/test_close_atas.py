@@ -66,6 +66,7 @@ async def test_withheld_fees_are_harvested_and_rent_is_what_the_accounts_held(tm
     assert_closes(close_t22, t22, user, TOKEN_2022_PROGRAM)
     assert result["closed"] == 2
     assert result["recovered_sol"] == (2_039_280 + 1_513_840) / 10**9
+    assert result["recovered_sol_raw"] == 2_039_280 + 1_513_840
     assert "skipped" not in result
 
 

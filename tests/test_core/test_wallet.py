@@ -538,6 +538,7 @@ async def test_drain_wallet_happy_path(tmp_path):
             return_value={
                 "closed": 3,
                 "recovered_sol": 0.006118,
+                "recovered_sol_raw": 6_118_000,
                 "signature": "atasig",
                 "skipped": [{"address": "a", "mint": "m", "reason": "frozen"}],
             },
@@ -560,6 +561,7 @@ async def test_drain_wallet_happy_path(tmp_path):
     assert result["atas_closed"] == 3
     assert result["sol_transferred"] == 0.99
     assert result["ata_signature"] == "atasig"
+    assert result["ata_rent_recovered_sol_raw"] == 6_118_000
     assert result["ata_skipped"] == [{"address": "a", "mint": "m", "reason": "frozen"}]
     assert result["sol_signature"] == "solsig"
     assert result["non_empty_token_accounts"] == []

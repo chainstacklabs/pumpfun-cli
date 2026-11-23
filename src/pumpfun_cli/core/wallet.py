@@ -324,7 +324,7 @@ async def close_empty_atas(
     listed in `skipped`, since one failed close would revert the batch.
     """
     from pumpfun_cli.protocol.client import RpcClient
-    from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL, TOKEN_2022_PROGRAM, TOKEN_PROGRAM
+    from pumpfun_cli.protocol.contracts import TOKEN_2022_PROGRAM, TOKEN_PROGRAM
     from pumpfun_cli.protocol.token_account import build_close_emptied_account_instructions
 
     keypair = decrypt_keypair(Path(keystore_path), password)
@@ -341,7 +341,11 @@ async def close_empty_atas(
                 else:
                     reason = "frozen" if holding.frozen else "close_authority"
                     skipped.append({"address": str(account), "mint": str(mint), "reason": reason})
-        result = {"closed": 0, "recovered_sol": 0.0, "signature": None}
+        result = {
+            "closed": 0,
+            **amount_fields("recovered_sol", 0, SOL_DECIMALS),
+            "signature": None,
+        }
         if skipped:
             result["skipped"] = skipped
         batch = closable[:_CLOSE_BATCH]
@@ -370,7 +374,7 @@ async def close_empty_atas(
         result.update(
             {
                 "closed": len(batch),
-                "recovered_sol": recovered / LAMPORTS_PER_SOL,
+                **amount_fields("recovered_sol", recovered, SOL_DECIMALS),
                 "signature": sig,
                 "explorer": f"https://solscan.io/tx/{sig}",
             }
@@ -419,7 +423,7 @@ async def drain_wallet(
     except Exception as e:
         ata_result = {
             "closed": 0,
-            "recovered_sol": 0.0,
+            **amount_fields("recovered_sol", 0, SOL_DECIMALS),
             "signature": None,
             "ata_error": str(e),
         }
@@ -442,6 +446,7 @@ async def drain_wallet(
         "non_empty_token_accounts": non_empty_tokens,
         "atas_closed": ata_result["closed"],
         "ata_rent_recovered_sol": ata_result["recovered_sol"],
+        "ata_rent_recovered_sol_raw": ata_result.get("recovered_sol_raw", 0),
         "ata_signature": ata_result.get("signature"),
         "ata_error": ata_result.get("ata_error"),
         "ata_skipped": ata_result.get("skipped", []),
