@@ -288,6 +288,7 @@ def test_wallet_drain_happy_path(tmp_path):
         "non_empty_token_accounts": [],
         "atas_closed": 2,
         "ata_rent_recovered_sol": 0.004,
+        "ata_rent_recovered_sol_raw": 4_000_000,
         "ata_signature": "atasig",
         "ata_error": None,
         "sol_transferred": 0.99,

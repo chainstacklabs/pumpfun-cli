@@ -23,7 +23,7 @@ from pumpfun_cli.core.wallet import (
     transfer_token,
 )
 from pumpfun_cli.group import JsonAwareGroup
-from pumpfun_cli.output import error, render, render_table
+from pumpfun_cli.output import error, render, render_table, sol_text
 
 app = typer.Typer(help="Manage wallet keys.", invoke_without_command=True, cls=JsonAwareGroup)
 
@@ -302,7 +302,7 @@ def wallet_close_atas(
 
     try:
         result = asyncio.run(close_empty_atas(rpc, path, password, confirm=confirm, **overrides))
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if not render(result, ctx.obj and ctx.obj.json_mode):
         if result["closed"] == 0:
@@ -310,7 +310,7 @@ def wallet_close_atas(
         else:
             typer.echo(
                 f"Closed {result['closed']} empty account(s),"
-                f" recovered {result['recovered_sol']:.6f} SOL"
+                f" recovered {sol_text(result['recovered_sol_raw'])} SOL"
             )
             typer.echo(f"TX: {result['explorer']}")
         _echo_skipped(result.get("skipped", []))
@@ -373,7 +373,7 @@ def wallet_drain(
     elif result["atas_closed"] > 0:
         typer.echo(
             f"Closed {result['atas_closed']} empty ATA(s),"
-            f" recovered {result['ata_rent_recovered_sol']:.6f} SOL"
+            f" recovered {sol_text(result['ata_rent_recovered_sol_raw'])} SOL"
         )
     else:
         typer.echo("No empty ATAs to close.")

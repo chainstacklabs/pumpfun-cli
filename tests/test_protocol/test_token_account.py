@@ -121,3 +121,17 @@ async def test_client_lists_the_owners_accounts_with_their_holdings():
     rows = await client.get_token_holdings(OWNER, TOKEN_2022_PROGRAM)
     assert rows == [(ACCOUNT, MINT, TokenHolding(0, 5, 9, closer=OWNER))]
     assert client.rpc.get_token_accounts_by_owner.call_args.kwargs["commitment"] == "confirmed"
+
+
+async def test_client_listing_failure_raises_without_the_url():
+    """An unanswered listing must not read as "the wallet has no accounts"."""
+    import pytest
+
+    client = RpcClient("http://secret-key.rpc")
+    client.rpc.get_token_accounts_by_owner = AsyncMock(
+        side_effect=OSError("http://secret-key.rpc timed out")
+    )
+    with pytest.raises(RuntimeError) as info:
+        await client.get_token_holdings(OWNER, TOKEN_2022_PROGRAM)
+    assert "secret-key" not in str(info.value)
+    assert info.value.__cause__ is None and info.value.__context__ is None

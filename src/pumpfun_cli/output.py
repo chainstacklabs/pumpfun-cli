@@ -56,3 +56,8 @@ def error(message: str, hint: str | None = None, exit_code: int = 1) -> NoReturn
     if hint:
         _console.print(f"  {hint}")
     raise SystemExit(exit_code)
+
+
+def sol_text(lamports: int) -> str:
+    """Lamports as an exact SOL amount, all nine decimals."""
+    return f"{lamports // 10**9}.{lamports % 10**9:09d}"

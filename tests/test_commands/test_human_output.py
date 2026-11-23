@@ -82,11 +82,12 @@ def test_a_sale_that_closes_the_account_says_so(wallet):
             "tokens_sold": 6.0,
             "token_account_closed": True,
             "rent_recovered_sol": 0.00207408,
+            "rent_recovered_sol_raw": 2_074_080,
             "explorer": "x",
         }
         sold = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all"])
     assert sold.exit_code == 0
-    assert "Closed the emptied token account: 0.002074 SOL rent back." in sold.output
+    assert "Closed the emptied token account: 0.002074080 SOL rent back." in sold.output
 
 
 def test_dry_runs(wallet):
@@ -411,11 +412,32 @@ def test_close_atas_reports_exact_rent_and_what_it_left(wallet):
         close.return_value = {
             "closed": 2,
             "recovered_sol": 0.00355312,
+            "recovered_sol_raw": 3_553_120,
             "signature": "s",
             "explorer": "x",
             "skipped": [{"address": "a", "mint": "m", "reason": "frozen"}],
         }
         out = runner.invoke(app, ["--rpc", "http://rpc", "wallet", "close-atas"])
     assert out.exit_code == 0
-    assert "Closed 2 empty account(s), recovered 0.003553 SOL" in out.output
+    assert "Closed 2 empty account(s), recovered 0.003553120 SOL" in out.output
     assert "Left 1 empty account(s) this wallet can't close" in out.output
+
+
+def test_close_atas_reports_a_failed_listing_instead_of_nothing_to_close(wallet):
+    with patch(
+        "pumpfun_cli.commands.wallet.close_empty_atas",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("Couldn't list the wallet's token accounts (ReadTimeout)."),
+    ):
+        out = runner.invoke(app, ["--rpc", "http://rpc", "wallet", "close-atas"])
+    assert out.exit_code == 1
+    assert "Couldn't list the wallet's token accounts" in out.output
+    assert "No empty token accounts" not in out.output
+
+
+def test_sol_text_is_exact():
+    from pumpfun_cli.output import sol_text
+
+    assert sol_text(3_002_280) == "0.003002280"
+    assert sol_text(12_000_000_001) == "12.000000001"
+    assert sol_text(0) == "0.000000000"
