@@ -21,7 +21,7 @@ from pumpfun_cli.core.trade import (
 from pumpfun_cli.core.trade import (
     collect_creator_fees as collect_creator_fees_core,
 )
-from pumpfun_cli.output import error, render
+from pumpfun_cli.output import error, render, sol_text
 
 
 def _route(curve, amm, launchlab, cpmm, force_amm: bool, mint: str, call) -> dict:
@@ -255,7 +255,7 @@ def sell(
             )
         if result.get("token_account_closed"):
             typer.echo(
-                f"Closed the emptied token account: {result['rent_recovered_sol']:.6f} SOL"
+                f"Closed the emptied token account: {sol_text(result['rent_recovered_sol_raw'])} SOL"
                 " rent back."
             )
         typer.echo(f"TX: {result['explorer']}")

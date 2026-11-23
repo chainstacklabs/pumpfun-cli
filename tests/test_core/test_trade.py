@@ -234,6 +234,7 @@ async def test_sell_all(tmp_keystore):
     assert_closes(close, find_ata(user, COIN, TOKEN_2022_PROGRAM), user, TOKEN_2022_PROGRAM)
     assert result["token_account_closed"] is True
     assert result["rent_recovered_sol"] == TOKEN_ACCOUNT_LAMPORTS / 10**9
+    assert result["rent_recovered_sol_raw"] == TOKEN_ACCOUNT_LAMPORTS
 
 
 async def test_selling_exactly_the_balance_closes_the_account(tmp_keystore):

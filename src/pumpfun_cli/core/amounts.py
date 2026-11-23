@@ -7,7 +7,7 @@ from solders.instruction import Instruction
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.protocol.client import RpcClient
-from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL
+from pumpfun_cli.protocol.contracts import SOL_DECIMALS
 from pumpfun_cli.protocol.token_account import (
     TokenHolding,
     build_close_emptied_account_instructions,
@@ -111,5 +111,5 @@ def close_if_emptied(
     )
     return ixs, {
         "token_account_closed": True,
-        "rent_recovered_sol": holding.lamports / LAMPORTS_PER_SOL,
+        **amount_fields("rent_recovered_sol", holding.lamports, SOL_DECIMALS),
     }

@@ -145,6 +145,32 @@ class RpcClient:
             return TokenHolding()
         return parse_token_account(bytes(resp.value.data), resp.value.lamports)
 
+    async def get_token_holdings(
+        self, owner: Pubkey, token_program: Pubkey
+    ) -> list[tuple[Pubkey, Pubkey, TokenHolding]]:
+        """(account, mint, holding) for every `token_program` account `owner` owns,
+        as of "confirmed".
+
+        Raises:
+            RuntimeError: The RPC didn't answer; an empty list would read as "none".
+        """
+        failure = None
+        try:
+            resp = await self.rpc.get_token_accounts_by_owner(
+                owner, TokenAccountOpts(program_id=token_program), commitment="confirmed"
+            )
+        except Exception as exc:  # noqa: BLE001 - its text can carry the RPC URL
+            failure = type(exc).__name__
+        if failure:
+            # Raised outside the handler so the original, URL and all, isn't chained.
+            raise RuntimeError(f"Couldn't list the wallet's token accounts ({failure}).")
+        rows = []
+        for item in resp.value:
+            data = bytes(item.account.data)
+            holding = parse_token_account(data, item.account.lamports)
+            rows.append((item.pubkey, Pubkey.from_bytes(data[:32]), holding))
+        return rows
+
     async def get_token_accounts_by_owner(
         self,
         owner: Pubkey,
