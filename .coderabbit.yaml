@@ -132,6 +132,7 @@ reviews:
 
 chat:
   auto_reply: true
+  allow_non_org_members: false
 
 knowledge_base:
   opt_out: false
