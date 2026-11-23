@@ -3,9 +3,15 @@
 import asyncio
 from decimal import ROUND_DOWN, Decimal
 
+from solders.instruction import Instruction
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.protocol.client import RpcClient
+from pumpfun_cli.protocol.contracts import LAMPORTS_PER_SOL
+from pumpfun_cli.protocol.token_account import (
+    TokenHolding,
+    build_close_emptied_account_instructions,
+)
 
 # A load-balanced endpoint can briefly miss a transaction another node confirmed.
 _TX_READ_ATTEMPTS = 3
@@ -80,3 +86,30 @@ async def confirmed_token_delta(
         if attempt < _TX_READ_ATTEMPTS - 1:
             await asyncio.sleep(1)
     return None
+
+
+def close_if_emptied(
+    *,
+    user: Pubkey,
+    mint: Pubkey,
+    account: Pubkey,
+    token_program: Pubkey,
+    holding: TokenHolding,
+    sold: int,
+) -> tuple[list[Instruction], dict]:
+    """Instructions that close `account` when selling `sold` empties it, and the
+    result fields saying so. Nothing for a partial sell, or for an account the
+    wallet cannot close: frozen, or with another close authority."""
+    if sold != holding.amount or not holding.closable_by(user):
+        return [], {}
+    ixs = build_close_emptied_account_instructions(
+        user=user,
+        mint=mint,
+        account=account,
+        token_program=token_program,
+        withheld=holding.withheld,
+    )
+    return ixs, {
+        "token_account_closed": True,
+        "rent_recovered_sol": holding.lamports / LAMPORTS_PER_SOL,
+    }

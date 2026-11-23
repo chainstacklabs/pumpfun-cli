@@ -12,6 +12,7 @@ from solders.pubkey import Pubkey
 from pumpfun_cli.protocol.address import (
     derive_amm_pool,
     derive_bonding_curve,
+    find_ata,
     find_quote_control,
 )
 from pumpfun_cli.protocol.contracts import (
@@ -32,11 +33,14 @@ from pumpfun_cli.protocol.contracts import (
     WSOL_MINT,
 )
 from pumpfun_cli.protocol.quote import _GLOBAL_LAYOUT
+from pumpfun_cli.protocol.token_account import TokenHolding
 
 MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 COIN = Pubkey.from_string("9PWeFRMCgEpt6ygn4L6c2sEFtRTerppBKUTWgyRwpump")
 CREATOR = Pubkey.from_string("7BajYqDdCgin9T6UnJon1pH2kJwXhLe9d277iRcva8wX")
 T22_QUOTE = Pubkey.from_string("SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb")
+
+TOKEN_ACCOUNT_LAMPORTS = 2_074_080
 
 PROTOCOL_RECIPIENTS = [Pubkey.new_unique() for _ in range(8)]
 RESERVED_RECIPIENT = Pubkey.new_unique()
@@ -190,6 +194,9 @@ class FakeClient:
         self.accounts: dict[Pubkey, SimpleNamespace] = {}
         self.balances: dict[Pubkey, int] = {}
         self.token_balances: dict[Pubkey, int] = {}
+        # Transfer fee withheld in a token account, and who may close it, by address.
+        self.withheld: dict[Pubkey, int] = {}
+        self.closers: dict[Pubkey, Pubkey] = {}
         self.default_balance = 10_000_000_000
         self.sent: list[dict] = []
         self.send_error: Exception | None = None
@@ -219,6 +226,16 @@ class FakeClient:
 
     async def get_token_account_balance(self, account: Pubkey) -> int:
         return self.token_balances.get(account, 0)
+
+    async def get_token_account(self, account: Pubkey) -> TokenHolding:
+        if account not in self.token_balances:
+            return TokenHolding()
+        return TokenHolding(
+            amount=self.token_balances[account],
+            withheld=self.withheld.get(account, 0),
+            lamports=TOKEN_ACCOUNT_LAMPORTS,
+            closer=self.closers.get(account),
+        )
 
     async def get_program_accounts(self, program_id: Pubkey, filters: list):
         """Accounts owned by `program_id` that pass every dataSize/memcmp filter."""
@@ -341,3 +358,45 @@ def add_launchlab_fixture(client: FakeClient, name: str) -> dict:
             owner=Pubkey.from_string(account["owner"]),
         )
     return {role: Pubkey.from_string(account["address"]) for role, account in bundle.items()}
+
+
+def hold(
+    client: FakeClient,
+    owner: Pubkey,
+    mint: Pubkey,
+    amount: int,
+    *,
+    program: Pubkey = TOKEN_2022_PROGRAM,
+    withheld: int = 0,
+) -> Pubkey:
+    """Give `owner` `amount` of `mint` in its ATA, which `owner` may close."""
+    ata = find_ata(owner, mint, program)
+    client.token_balances[ata] = amount
+    client.closers[ata] = owner
+    if withheld:
+        client.withheld[ata] = withheld
+    return ata
+
+
+def assert_closes(ix, account: Pubkey, owner: Pubkey, token_program: Pubkey) -> None:
+    """`ix` is CloseAccount on `account`, its rent going back to `owner`."""
+    assert ix.program_id == token_program
+    assert bytes(ix.data) == bytes([9])
+    assert [m.pubkey for m in ix.accounts] == [account, owner, owner]
+    assert ix.accounts[2].is_signer
+
+
+def closed_accounts(instructions) -> list[Pubkey]:
+    """Token accounts that `instructions` close, under either token program."""
+    return [
+        ix.accounts[0].pubkey
+        for ix in instructions
+        if ix.program_id in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM) and bytes(ix.data) == bytes([9])
+    ]
+
+
+def assert_harvests(ix, mint: Pubkey, account: Pubkey) -> None:
+    """`ix` moves the transfer fee withheld in `account` into `mint`."""
+    assert ix.program_id == TOKEN_2022_PROGRAM
+    assert bytes(ix.data) == bytes([26, 4])
+    assert [(m.pubkey, m.is_writable) for m in ix.accounts] == [(mint, True), (account, True)]

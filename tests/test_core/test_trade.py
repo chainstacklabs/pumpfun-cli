@@ -45,10 +45,15 @@ from tests.test_core.helpers import (
     CREATOR,
     GLOBAL_DEFAULTS,
     T22_QUOTE,
+    TOKEN_ACCOUNT_LAMPORTS,
     FakeClient,
+    assert_closes,
+    assert_harvests,
     build_curve_data,
     build_pool_data,
     chain_with_coin,
+    closed_accounts,
+    hold,
 )
 
 MINT_STR = str(COIN)
@@ -214,7 +219,7 @@ async def test_buy_maps_onchain_errors(tmp_keystore, code, error):
 async def test_sell_all(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = chain_with_coin()
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 5_000_000
+    hold(client, user, COIN, 5_000_000)
     with _patched(client):
         result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
     assert result["tokens_sold"] == 5.0
@@ -223,8 +228,62 @@ async def test_sell_all(tmp_keystore):
     assert bytes(ix.data[:8]) == SELL_V2_DISCRIMINATOR
     assert len(ix.accounts) == 26
     assert int.from_bytes(bytes(ix.data[8:16]), "little") == 5_000_000
-    # A SOL coin pays out natively, so only the sell instruction is sent.
-    assert len(client.sent[0]["instructions"]) == 1
+    # A SOL coin pays out natively: the sell, then closing the emptied account.
+    sell, close = client.sent[0]["instructions"]
+    assert sell.program_id == PUMP_PROGRAM
+    assert_closes(close, find_ata(user, COIN, TOKEN_2022_PROGRAM), user, TOKEN_2022_PROGRAM)
+    assert result["token_account_closed"] is True
+    assert result["rent_recovered_sol"] == TOKEN_ACCOUNT_LAMPORTS / 10**9
+
+
+async def test_selling_exactly_the_balance_closes_the_account(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin()
+    hold(client, user, COIN, 5_000_000)
+    with _patched(client):
+        result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "5")
+    assert_closes(
+        client.sent[0]["instructions"][-1],
+        find_ata(user, COIN, TOKEN_2022_PROGRAM),
+        user,
+        TOKEN_2022_PROGRAM,
+    )
+    assert result["token_account_closed"] is True
+
+
+async def test_a_partial_sell_leaves_the_account_open(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin()
+    hold(client, user, COIN, 5_000_000)
+    with _patched(client):
+        result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "4.999999")
+    assert closed_accounts(client.sent[0]["instructions"]) == []
+    assert "token_account_closed" not in result
+
+
+async def test_an_account_someone_else_can_close_stays_open(tmp_keystore):
+    """Some trading tools set their own close authority on the accounts they open."""
+    user = _user_from(tmp_keystore)
+    client = chain_with_coin()
+    ata = hold(client, user, COIN, 5_000_000)
+    client.closers[ata] = Pubkey.new_unique()
+    with _patched(client):
+        result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
+    assert result["tokens_sold_raw"] == 5_000_000
+    assert closed_accounts(client.sent[0]["instructions"]) == []
+    assert "token_account_closed" not in result
+
+
+async def test_withheld_transfer_fees_are_harvested_before_closing(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    ata = find_ata(user, COIN, TOKEN_2022_PROGRAM)
+    client = chain_with_coin()
+    hold(client, user, COIN, 5_000_000, withheld=7)
+    with _patched(client):
+        await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
+    _, harvest, close = client.sent[0]["instructions"]
+    assert_harvests(harvest, COIN, ata)
+    assert_closes(close, ata, user, TOKEN_2022_PROGRAM)
 
 
 async def test_sell_non_sol_creates_the_payout_account(tmp_keystore):
@@ -232,7 +291,7 @@ async def test_sell_non_sol_creates_the_payout_account(tmp_keystore):
     client = chain_with_coin(
         curve=build_curve_data(quote_mint=T22_QUOTE), quote_mint=T22_QUOTE, quote_decimals=6
     )
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 1_000_000
+    hold(client, user, COIN, 1_000_000)
     with _patched(client):
         result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "1")
     assert result["action"] == "sell"
@@ -258,7 +317,7 @@ async def test_sell_nothing_held(tmp_keystore):
 async def test_sell_dry_run(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = chain_with_coin()
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 5_000_000
+    hold(client, user, COIN, 5_000_000)
     with _patched(client):
         result = await sell_token(
             "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", dry_run=True
@@ -288,13 +347,16 @@ _HELD = 10**14
 async def test_sell_caps_at_what_the_curve_can_pay(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = chain_with_coin(curve=build_curve_data(**_SHORT_CURVE))
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = _HELD
+    hold(client, user, COIN, _HELD)
     with _patched(client):
         result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
     sold = int.from_bytes(bytes(_pump_ix(client.sent[0]).data[8:16]), "little")
     assert 0 < sold < _HELD
     assert result["tokens_sold_raw"] == sold
     assert result["tokens_kept_raw"] == _HELD - sold
+    # What the curve can't pay for stays in the account, so it stays open.
+    assert closed_accounts(client.sent[0]["instructions"]) == []
+    assert "token_account_closed" not in result
     # The payout fits the real reserves, and one more token would not.
     assert sold * 30_000_000_000 // (10**15 + sold) <= 1_000_000
     assert (sold + 1) * 30_000_000_000 // (10**15 + sold + 1) > 1_000_000
@@ -303,7 +365,7 @@ async def test_sell_caps_at_what_the_curve_can_pay(tmp_keystore):
 async def test_sell_dry_run_shows_what_the_curve_cant_pay(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = chain_with_coin(curve=build_curve_data(**_SHORT_CURVE))
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = _HELD
+    hold(client, user, COIN, _HELD)
     with _patched(client):
         result = await sell_token(
             "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", dry_run=True
@@ -315,7 +377,7 @@ async def test_sell_dry_run_shows_what_the_curve_cant_pay(tmp_keystore):
 async def test_sell_within_reserves_keeps_nothing(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = chain_with_coin()
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 5_000_000
+    hold(client, user, COIN, 5_000_000)
     with _patched(client):
         result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
     assert "tokens_kept" not in result
@@ -324,7 +386,7 @@ async def test_sell_within_reserves_keeps_nothing(tmp_keystore):
 async def test_sell_refused_when_the_curve_can_pay_nothing(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = chain_with_coin(curve=build_curve_data(real_quote=0, mayhem=True))
-    client.token_balances[find_ata(user, COIN, TOKEN_2022_PROGRAM)] = 5_000_000
+    hold(client, user, COIN, 5_000_000)
     with _patched(client):
         result = await sell_token("http://rpc", tmp_keystore, "testpass", MINT_STR, "all")
     assert result["error"] == "curve_short"

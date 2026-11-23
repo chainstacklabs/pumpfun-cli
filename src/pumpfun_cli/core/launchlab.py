@@ -13,6 +13,7 @@ from spl.token.instructions import create_idempotent_associated_token_account
 
 from pumpfun_cli.core.amounts import (
     amount_fields,
+    close_if_emptied,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -330,7 +331,8 @@ async def sell_launchlab(
         user = keypair.pubkey()
         user_ata = find_ata(user, mint, base_program)
 
-        held = await client.get_token_account_balance(user_ata)
+        holding = await client.get_token_account(user_ata)
+        held = holding.amount
         if amount_str.lower() == "all":
             token_amount = held
         else:
@@ -379,6 +381,14 @@ async def sell_launchlab(
                 "slippage_pct": slippage,
             }
 
+        empty_ixs, closed = close_if_emptied(
+            user=user,
+            mint=mint,
+            account=user_ata,
+            token_program=base_program,
+            holding=holding,
+            sold=token_amount,
+        )
         quote_account, open_ixs, close_ixs = quote_settlement_account(
             user, quote_mint, market["quote_token_program"]
         )
@@ -397,6 +407,7 @@ async def sell_launchlab(
                 minimum_amount_out=min_quote_out,
             ),
             *close_ixs,
+            *empty_ixs,
         ]
         try:
             sig = await client.send_tx(
@@ -416,6 +427,7 @@ async def sell_launchlab(
             **_market_fields(market),
             **amount_fields("tokens_sold", token_amount, base_decimals),
             "quote_received": quote_out / 10**quote_decimals,
+            **closed,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }

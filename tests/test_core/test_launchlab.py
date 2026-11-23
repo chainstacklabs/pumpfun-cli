@@ -22,7 +22,14 @@ from pumpfun_cli.protocol.launchlab import (
     parse_pool_state,
     sell_amount_out,
 )
-from tests.test_core.helpers import FakeClient, add_launchlab_fixture
+from tests.test_core.helpers import (
+    FakeClient,
+    add_launchlab_fixture,
+    assert_closes,
+    assert_harvests,
+    closed_accounts,
+    hold,
+)
 
 SOL_FIXTURE = "launchlab_sol_pool.json"
 T22_FIXTURE = "launchlab_token2022_quote_pool.json"
@@ -150,7 +157,8 @@ async def test_buy_dry_run_sends_nothing(tmp_keystore):
 async def test_sell_all_of_a_transfer_fee_coin(tmp_keystore):
     client, roles, pool = _chain(T22_FIXTURE)
     user = _user(tmp_keystore)
-    client.token_balances[find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)] = 10**10
+    ata = find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)
+    hold(client, user, roles["base_mint"], 10**10, withheld=10**6)
     with _patched(client):
         result = await sell_launchlab(
             "http://rpc", tmp_keystore, "testpass", str(roles["base_mint"]), "all"
@@ -162,6 +170,26 @@ async def test_sell_all_of_a_transfer_fee_coin(tmp_keystore):
     expected = sell_amount_out(pool, 10**10, 12_500, ((100, 10**15),))
     assert result["quote_received"] == expected / 10**8
     assert min_out == expected * 85 // 100
+    # The emptied account gives up its withheld fees to the mint, then closes.
+    *_, harvest, close = client.sent[0]["instructions"]
+    assert_harvests(harvest, roles["base_mint"], ata)
+    assert_closes(close, ata, user, TOKEN_2022_PROGRAM)
+    assert result["token_account_closed"] is True
+
+
+async def test_a_partial_sell_leaves_the_account_open(tmp_keystore):
+    client, roles, _ = _chain(T22_FIXTURE)
+    user = _user(tmp_keystore)
+    ata = find_ata(user, roles["base_mint"], TOKEN_2022_PROGRAM)
+    hold(client, user, roles["base_mint"], 10**10, withheld=10**6)
+    with _patched(client):
+        result = await sell_launchlab(
+            "http://rpc", tmp_keystore, "testpass", str(roles["base_mint"]), "5000"
+        )
+    assert _u64s(_swap(client.sent[0]))[0] == 5 * 10**9
+    assert ata not in closed_accounts(client.sent[0]["instructions"])
+    assert all(bytes(i.data) != bytes([26, 4]) for i in client.sent[0]["instructions"])
+    assert "token_account_closed" not in result
 
 
 async def test_sell_more_than_held(tmp_keystore):
