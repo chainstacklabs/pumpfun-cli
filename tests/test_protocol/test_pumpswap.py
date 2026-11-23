@@ -3,7 +3,7 @@
 import pytest
 from solders.pubkey import Pubkey
 
-from pumpfun_cli.protocol.contracts import USDC_MINT
+from pumpfun_cli.protocol.contracts import NORMAL_FEE_RECIPIENTS, USDC_MINT
 from pumpfun_cli.protocol.pumpswap import (
     parse_global_config,
     parse_pool_data,
@@ -77,8 +77,16 @@ def test_fee_recipients(mayhem):
     if mayhem:
         assert fee == RESERVED_RECIPIENT
     else:
-        assert fee in PROTOCOL_RECIPIENTS
+        assert fee in NORMAL_FEE_RECIPIENTS
     assert buyback in BUYBACK_RECIPIENTS
+
+
+def test_normal_pool_ignores_global_config_protocol_recipients():
+    # GlobalConfig may still list the set retired on 2026-11-25.
+    config = parse_global_config(build_global_config_data())
+    picks = {pick_fee_recipients(config, False)[0] for _ in range(400)}
+    assert picks == set(NORMAL_FEE_RECIPIENTS)
+    assert not picks & set(PROTOCOL_RECIPIENTS)
 
 
 def test_pool_price_uses_both_decimals():
