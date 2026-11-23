@@ -61,3 +61,9 @@ def test_original_49_byte_curve_decodes_with_absent_fields():
 def test_curve_shorter_than_its_reserves_is_refused():
     with pytest.raises(ValueError):
         parse_bonding_curve(build_curve_data(length=48))
+
+
+def test_creator_fee_waiting_on_the_curve():
+    assert parse_bonding_curve(build_curve_data(length=166, creator_fee=7))["creator_fee"] == 7
+    # A curve written before the field was appended reads it as zero.
+    assert parse_bonding_curve(build_curve_data(length=125))["creator_fee"] == 0

@@ -160,6 +160,8 @@ Amounts are in the coin's quote asset. Most pump.fun coins are priced in SOL, bu
 
 A LaunchLab coin priced in anything but SOL is found with `getProgramAccounts`, so it needs an RPC that serves it.
 
+`collect-creator-fee` first sweeps the creator fees still waiting on your coins' curves and pools into your vaults, the largest eight per run; run it again if it says more coins hold fees. It finds them with `getProgramAccounts`; without that method it collects only what the vaults already hold.
+
 ### Transfer fees
 
 Some LaunchLab coins (StonkFun reward coins, for example) are Token-2022 mints with a transfer fee, shown as `transfer_fee_bps` by `info`. A buy delivers that much less and a sell sends that much less into the pool. The CLI's amounts and slippage floors already count it.
@@ -185,7 +187,7 @@ A pump.fun bonding curve pays a sell out of its real reserves, which on some coi
 | `tx-status` | Solana RPC (`getTransaction`) | JSON-RPC |
 | `migrate` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `claim-cashback` | Solana RPC (`sendTransaction`) | JSON-RPC |
-| `collect-creator-fee` | Solana RPC (`sendTransaction`) | JSON-RPC |
+| `collect-creator-fee` | Solana RPC (`getProgramAccounts`, `getTokenAccountsByOwner`, `sendTransaction`) | JSON-RPC |
 | `close-volume-acc` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `tokens trending` | `frontend-api-v3.pump.fun/coins/boards/movers` | HTTPS |
 | `tokens new` | `frontend-api-v3.pump.fun/coins/boards/new` | HTTPS |

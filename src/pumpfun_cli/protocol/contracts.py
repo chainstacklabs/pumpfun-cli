@@ -97,6 +97,8 @@ COLLECT_CREATOR_FEE_V2_DISCRIMINATOR = bytes([207, 17, 138, 242, 4, 34, 19, 56])
 CLAIM_CASHBACK_V2_DISCRIMINATOR = bytes([122, 243, 204, 65, 94, 116, 29, 55])
 CLOSE_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR = bytes([249, 69, 164, 218, 150, 103, 84, 138])
 MIGRATE_V2_DISCRIMINATOR = bytes([187, 203, 18, 31, 206, 237, 254, 41])
+# Same name on pump.fun and PumpSwap, so the same discriminator.
+SWEEP_CREATOR_FEE_DISCRIMINATOR = bytes([32, 246, 191, 52, 8, 201, 73, 186])
 
 # PumpSwap instruction discriminators
 PUMPSWAP_BUY_DISCRIMINATOR = bytes([102, 6, 61, 18, 1, 218, 235, 234])
@@ -112,12 +114,17 @@ QUOTE_CONTROL_DISCRIMINATOR = bytes([56, 244, 35, 238, 193, 213, 162, 201])
 POOL_DISCRIMINATOR = bytes([241, 154, 109, 4, 17, 177, 109, 188])
 GLOBAL_CONFIG_DISCRIMINATOR = bytes([149, 8, 156, 202, 160, 252, 176, 217])
 
+# BondingCurve.creator, discriminator included; the rest lives in curve.py.
+BONDING_CURVE_CREATOR_OFFSET = 49
+
 # PumpSwap Pool offsets, discriminator included. Live pools are 301 bytes.
 POOL_BASE_MINT_OFFSET = 43
+POOL_QUOTE_MINT_OFFSET = 75
 POOL_COIN_CREATOR_OFFSET = 211
 POOL_MAYHEM_MODE_OFFSET = 243
 POOL_CASHBACK_OFFSET = 244
 POOL_VIRTUAL_QUOTE_RESERVES_OFFSET = 245  # i128, added to the quote vault when pricing
+POOL_CREATOR_FEES_OFFSET = 279  # u64, creator fee kept in the pool until swept
 
 # PumpSwap GlobalConfig offsets, discriminator included.
 GLOBALCONFIG_LP_FEE_BPS_OFFSET = 40

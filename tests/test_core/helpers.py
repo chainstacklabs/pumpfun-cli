@@ -6,6 +6,7 @@ import struct
 from pathlib import Path
 from types import SimpleNamespace
 
+import base58
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.protocol.address import (
@@ -56,10 +57,14 @@ def build_curve_data(
     quote_mint: Pubkey = DEFAULT_PUBKEY,
     creator_fee_bps: int = 0,
     holder_reward: bool = False,
+    creator_fee: int = 0,
     length: int = 125,
 ) -> bytes:
-    """A BondingCurve account as create_v2 allocates it (125 bytes) or longer."""
-    data = bytearray(max(length, 125))
+    """A BondingCurve account as create_v2 allocates it (125 bytes) or longer.
+
+    `creator_fee` is the fee waiting for a sweep; it needs `length` of 133 or more.
+    """
+    data = bytearray(max(length, 133))
     data[:8] = BONDING_CURVE_DISCRIMINATOR
     struct.pack_into(
         "<QQQQQ?", data, 8, virtual_token, virtual_quote, real_token, real_quote, supply, complete
@@ -70,6 +75,7 @@ def build_curve_data(
     data[83:115] = bytes(quote_mint)
     struct.pack_into("<Q", data, 115, creator_fee_bps)
     data[124] = holder_reward
+    struct.pack_into("<Q", data, 125, creator_fee)
     return bytes(data[:length])
 
 
@@ -84,6 +90,7 @@ def build_pool_data(
     cashback: bool = False,
     virtual_quote: int = 0,
     index: int = 0,
+    creator_fees: int = 0,
 ) -> bytes:
     """A PumpSwap Pool account (301 bytes, like live pools)."""
     data = bytearray(301)
@@ -101,6 +108,7 @@ def build_pool_data(
     data[243] = mayhem
     data[244] = cashback
     data[245:261] = virtual_quote.to_bytes(16, "little", signed=True)
+    struct.pack_into("<Q", data, 279, creator_fees)
     return bytes(data)
 
 
@@ -187,6 +195,9 @@ class FakeClient:
         self.send_error: Exception | None = None
         # What getTransaction returns for any signature; None means not found.
         self.transaction: dict | None = None
+        self.program_accounts_error: Exception | None = None
+        # Token accounts by owner: owner -> [(mint, token program)].
+        self.token_accounts: dict[Pubkey, list[tuple[Pubkey, Pubkey]]] = {}
 
     def add(self, address: Pubkey, data: bytes, owner: Pubkey = TOKEN_PROGRAM) -> None:
         self.accounts[address] = SimpleNamespace(data=data, owner=owner, lamports=1)
@@ -211,20 +222,33 @@ class FakeClient:
 
     async def get_program_accounts(self, program_id: Pubkey, filters: list):
         """Accounts owned by `program_id` that pass every dataSize/memcmp filter."""
+        if self.program_accounts_error:
+            raise self.program_accounts_error
 
         def passes(data: bytes) -> bool:
             for f in filters:
                 if isinstance(f, int):
                     if len(data) != f:
                         return False
-                elif data[f.offset : f.offset + 32] != bytes(Pubkey.from_string(f.bytes)):
-                    return False
+                else:
+                    want = base58.b58decode(f.bytes)
+                    if data[f.offset : f.offset + len(want)] != want:
+                        return False
             return True
 
         return [
             SimpleNamespace(pubkey=address, account=account)
             for address, account in self.accounts.items()
             if account.owner == program_id and passes(account.data)
+        ]
+
+    async def get_token_accounts_by_owner(
+        self, owner: Pubkey, token_program: Pubkey, commitment=None
+    ) -> list[dict]:
+        return [
+            {"mint": str(mint), "amount": 1}
+            for mint, program in self.token_accounts.get(owner, [])
+            if program == token_program
         ]
 
     async def send_tx(

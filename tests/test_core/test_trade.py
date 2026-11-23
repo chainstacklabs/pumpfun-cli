@@ -6,6 +6,7 @@ import pytest
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.trade import (
+    MAX_SWEEPS,
     buy_token,
     claim_cashback,
     close_volume_accumulator,
@@ -16,6 +17,7 @@ from pumpfun_cli.core.trade import (
 from pumpfun_cli.protocol.address import (
     derive_amm_creator_vault,
     derive_amm_pool,
+    derive_bonding_curve,
     derive_creator_vault,
     find_ata,
     find_user_volume_accumulator,
@@ -28,10 +30,12 @@ from pumpfun_cli.protocol.contracts import (
     COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR,
     COLLECT_CREATOR_FEE_V2_DISCRIMINATOR,
     MIGRATE_V2_DISCRIMINATOR,
+    PUMP_AMM_PROGRAM,
     PUMP_BUY_COMPUTE_UNITS,
     PUMP_NON_SOL_TRADE_COMPUTE_UNITS,
     PUMP_PROGRAM,
     SELL_V2_DISCRIMINATOR,
+    SWEEP_CREATOR_FEE_DISCRIMINATOR,
     TOKEN_2022_PROGRAM,
     TOKEN_PROGRAM,
     WSOL_MINT,
@@ -43,6 +47,7 @@ from tests.test_core.helpers import (
     T22_QUOTE,
     FakeClient,
     build_curve_data,
+    build_pool_data,
     chain_with_coin,
 )
 
@@ -429,3 +434,92 @@ async def test_legacy_curve_without_creator_is_refused(tmp_keystore, fn, arg):
         result = await fn("http://rpc", tmp_keystore, "testpass", MINT_STR, arg)
     assert result["error"] == "legacy_curve"
     assert client.sent == []
+
+
+def _waiting_curve(client: FakeClient, creator: Pubkey, fee: int, **curve) -> Pubkey:
+    """A coin of `creator` whose curve holds `fee` waiting for a sweep."""
+    mint = Pubkey.new_unique()
+    curve_address = derive_bonding_curve(mint)
+    client.add(
+        curve_address,
+        build_curve_data(creator=creator, creator_fee=fee, length=166, **curve),
+        owner=PUMP_PROGRAM,
+    )
+    client.token_accounts[curve_address] = [(mint, TOKEN_2022_PROGRAM)]
+    return mint
+
+
+def _waiting_pool(client: FakeClient, creator: Pubkey, fee: int) -> Pubkey:
+    address = Pubkey.new_unique()
+    client.add(
+        address, build_pool_data(coin_creator=creator, creator_fees=fee), owner=PUMP_AMM_PROGRAM
+    )
+    return address
+
+
+def _sweeps(sent: dict) -> list:
+    return [
+        ix for ix in sent["instructions"] if bytes(ix.data[:8]) == SWEEP_CREATOR_FEE_DISCRIMINATOR
+    ]
+
+
+async def test_collect_sweeps_fees_waiting_on_curves_and_pools_first(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
+    mint = _waiting_curve(client, user, 300_000_000)
+    pool = _waiting_pool(client, user, 200_000_000)
+    _waiting_curve(client, CREATOR, 999)  # someone else's coin
+    _waiting_curve(client, user, 0)  # nothing waiting
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    assert result["pump_recovered"] == 0.3
+    assert result["pumpswap_recovered"] == 0.2
+    assert result["coins_swept"] == 2
+    ixs = client.sent[0]["instructions"]
+    sweeps = _sweeps(client.sent[0])
+    assert {(ix.program_id, ix.accounts[2].pubkey) for ix in sweeps} == {
+        (PUMP_PROGRAM, mint),
+        (PUMP_AMM_PROGRAM, pool),
+    }
+    collects = [
+        i
+        for i, ix in enumerate(ixs)
+        if bytes(ix.data[:8])
+        in (COLLECT_CREATOR_FEE_V2_DISCRIMINATOR, COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR)
+    ]
+    assert max(ixs.index(ix) for ix in sweeps) < min(collects)
+
+
+async def test_collect_sweeps_only_the_requested_quote_asset(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240
+    _waiting_curve(client, user, 5_000, quote_mint=Pubkey.new_unique())
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    assert result["error"] == "no_fees"
+
+
+async def test_collect_sweeps_the_largest_fees_and_reports_the_rest(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    fees = [1_000 * (i + 1) for i in range(MAX_SWEEPS + 3)]
+    mints = {_waiting_curve(client, user, fee): fee for fee in fees}
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    swept = {mints[ix.accounts[2].pubkey] for ix in _sweeps(client.sent[0])}
+    assert swept == set(sorted(fees)[-MAX_SWEEPS:])
+    assert result["coins_still_waiting"] == 3
+
+
+async def test_collect_without_get_program_accounts_collects_the_vaults(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240 + 1_000_000
+    client.program_accounts_error = RuntimeError("method not allowed")
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    assert result["pump_recovered"] == 0.001
+    assert "getProgramAccounts" in result["sweep_warning"]
+    assert not _sweeps(client.sent[0])

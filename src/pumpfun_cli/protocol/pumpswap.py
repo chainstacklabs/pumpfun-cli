@@ -16,6 +16,7 @@ from pumpfun_cli.protocol.contracts import (
     GLOBALCONFIG_PROTOCOL_FEE_RECIPIENTS_OFFSET,
     GLOBALCONFIG_RESERVED_FEE_RECIPIENT_OFFSET,
     POOL_CASHBACK_OFFSET,
+    POOL_CREATOR_FEES_OFFSET,
     POOL_MAYHEM_MODE_OFFSET,
     POOL_VIRTUAL_QUOTE_RESERVES_OFFSET,
     PUMP_SWAP_GLOBAL_CONFIG,
@@ -63,7 +64,8 @@ def parse_pool_data(data: bytes) -> dict:
     base_mint (43), quote_mint (75), lp_mint (107), pool_base_token_account
     (139), pool_quote_token_account (171), lp_supply u64 (203), coin_creator
     (211), is_mayhem_mode (243), is_cashback_coin (244), virtual_quote_reserves
-    i128 (245).
+    i128 (245), creator_fees u64 (279). A pool written before a field was
+    appended is shorter; the missing field reads as zero.
 
     `coin_creator` is set only on a canonical pool, one that graduated from a
     pump.fun curve; every other pool carries the default pubkey.
@@ -90,6 +92,11 @@ def parse_pool_data(data: bytes) -> dict:
         "is_mayhem_mode": _flag(data, POOL_MAYHEM_MODE_OFFSET),
         "is_cashback_coin": _flag(data, POOL_CASHBACK_OFFSET),
         "virtual_quote_reserves": virtual_quote,
+        "creator_fees": (
+            struct.unpack_from("<Q", data, POOL_CREATOR_FEES_OFFSET)[0]
+            if len(data) >= POOL_CREATOR_FEES_OFFSET + 8
+            else 0
+        ),
     }
 
 
