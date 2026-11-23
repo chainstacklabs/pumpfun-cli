@@ -523,3 +523,17 @@ async def test_collect_without_get_program_accounts_collects_the_vaults(tmp_keys
     assert result["pump_recovered"] == 0.001
     assert "getProgramAccounts" in result["sweep_warning"]
     assert not _sweeps(client.sent[0])
+
+
+async def test_collect_without_get_program_accounts_and_empty_vaults_says_so(tmp_keystore):
+    """Empty vaults plus a failed search must not read as "nothing to collect"."""
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
+    client.program_accounts_error = RuntimeError("method not allowed")
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    assert result["error"] == "no_fees"
+    assert "getProgramAccounts" in result["message"]
+    assert "getProgramAccounts" in result["sweep_warning"]
+    assert not client.sent

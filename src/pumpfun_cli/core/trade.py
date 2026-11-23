@@ -574,6 +574,9 @@ async def migrate_token(
 # One run sweeps at most this many curves and pools, largest fee first, so the
 # transaction stays within the size limit; a second run takes the rest.
 MAX_SWEEPS = 8
+_SEARCH_FAILED = (
+    "Could not search for fees waiting on your coins (the RPC refused getProgramAccounts)"
+)
 COLLECT_COMPUTE_UNITS = 150_000
 SWEEP_COMPUTE_UNITS = 40_000
 
@@ -617,24 +620,35 @@ async def collect_creator_fees(
             find_ata(amm_vault, quote_mint, quote_program)
         )
 
-        sweep_warning = None
+        search_failed = False
         try:
             waiting_curves, waiting_pools = await find_waiting_creator_fees(
                 client, creator, quote_mint
             )
         except Exception:  # noqa: BLE001 - an RPC that refuses getProgramAccounts
             waiting_curves, waiting_pools = [], []
-            sweep_warning = (
-                "Could not search for fees waiting on your coins (the RPC refused"
-                " getProgramAccounts); collected what the vaults hold."
-            )
+            search_failed = True
         waiting = sorted([*waiting_curves, *waiting_pools], key=lambda w: w.amount, reverse=True)
         sweeps, still_waiting = waiting[:MAX_SWEEPS], len(waiting) - MAX_SWEEPS
         pump_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingCurve))
         pumpswap_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingPool))
 
         if pump_balance <= 0 and pumpswap_balance <= 0:
+            if search_failed:
+                # Fees may still wait on the coins; "nothing to collect" would hide them.
+                return {
+                    "error": "no_fees",
+                    "message": (
+                        f"The vaults hold no creator fees. {_SEARCH_FAILED}, so fees"
+                        " still waiting on your coins were not checked; use an RPC"
+                        " that serves it."
+                    ),
+                    "sweep_warning": f"{_SEARCH_FAILED}.",
+                }
             return {"error": "no_fees", "message": "No creator fees to collect."}
+        sweep_warning = (
+            f"{_SEARCH_FAILED}; collected what the vaults hold." if search_failed else None
+        )
 
         if pumpswap_balance > 0 or not is_sol(quote_mint):
             # Both payouts land in the creator's token account for the quote asset.
