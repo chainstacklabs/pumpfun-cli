@@ -13,6 +13,7 @@ from spl.token.instructions import create_idempotent_associated_token_account
 from pumpfun_cli.core.amounts import (
     amount_fields,
     close_if_emptied,
+    confirmed_quote_received,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -41,7 +42,7 @@ from pumpfun_cli.protocol.launchlab import (
     platform_name,
     withheld_fee,
 )
-from pumpfun_cli.protocol.quote import quote_symbol
+from pumpfun_cli.protocol.quote import is_sol, quote_symbol
 
 CPMM_COMPUTE_UNITS = 150_000
 _TOKEN_AMOUNT_OFFSET = 64
@@ -373,12 +374,24 @@ async def sell_cpmm(
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, CPMM_SLIPPAGE_ERROR_CODES)
+        received = (
+            await confirmed_quote_received(
+                client,
+                sig,
+                user,
+                quote_mint,
+                sol_quote=is_sol(quote_mint),
+                rent_returned=closed.get("rent_recovered_sol_raw", 0),
+            )
+            if confirm
+            else None
+        )
         result = {
             "action": "sell",
             "mint": mint_str,
             **_pool_fields(pool),
             **amount_fields("tokens_sold", token_amount, base_decimals),
-            "quote_received": quote_out / 10**quote_decimals,
+            **received_fields("quote_received", received, quote_out, quote_decimals),
             **closed,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",

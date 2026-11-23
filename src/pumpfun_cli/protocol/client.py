@@ -377,6 +377,9 @@ class RpcClient:
             # None when the node did not record them, distinct from an empty list.
             "pre_token_balances": meta.get("preTokenBalances"),
             "post_token_balances": meta.get("postTokenBalances"),
+            # Lamports per account key; index 0 is the fee payer.
+            "pre_balances": meta.get("preBalances"),
+            "post_balances": meta.get("postBalances"),
         }
 
     async def close(self):

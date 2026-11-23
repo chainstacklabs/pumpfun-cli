@@ -1,3 +1,3 @@
 """pumpfun-cli — CLI for pump.fun on Solana."""
 
-__version__ = "0.3.7"
+__version__ = "0.4.0"

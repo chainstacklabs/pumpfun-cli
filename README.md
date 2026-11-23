@@ -176,7 +176,7 @@ A sell that empties the coin's token account (`all`, or exactly the balance) clo
 
 ### Amounts in JSON output
 
-An exact amount comes twice: in whole units for reading (`tokens_sold`) and as the integer in raw units (`tokens_sold_raw`). Use the `_raw` field for anything that has to add up; the float can drop a unit. An amount known only as an estimate has no `_raw` twin: `quote_received`, the `collect-creator-fee` totals, and `tokens_received` after a `--fast` buy; otherwise it is read from the confirmed transaction. If that transaction cannot be read back, a buy also reports the estimate without `tokens_received_raw`, so check for the field. Dry-run fields (`expected_tokens_raw`, `expected_quote_raw`, `min_*_out_raw`) are exact integers of the quote the transaction would be built from, not executed amounts.
+An exact amount comes twice: in whole units for reading (`tokens_sold`) and as the integer in raw units (`tokens_sold_raw`). Use the `_raw` field for anything that has to add up; the float can drop a unit. An amount known only as an estimate has no `_raw` twin: the `collect-creator-fee` totals, and a trade's `tokens_received` or `quote_received` after `--fast`. Otherwise a trade reads what it received from the confirmed transaction; if that transaction cannot be read back, it reports the estimate without the `_raw` field, so check for it. Dry-run fields (`expected_tokens_raw`, `expected_quote_raw`, `min_*_out_raw`) are exact integers of the quote the transaction would be built from, not executed amounts.
 
 An error comes back as `{"error": <message>, "hint": ..., "exit_code": ...}` with a non-zero exit status.
 

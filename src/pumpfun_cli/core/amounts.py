@@ -68,24 +68,59 @@ def token_delta(tx: dict, owner: Pubkey, mint: Pubkey) -> int | None:
     return None if post is None or pre is None else post - pre
 
 
-async def confirmed_token_delta(
-    client: RpcClient, signature: str, owner: Pubkey, mint: Pubkey
-) -> int | None:
-    """Raw tokens a confirmed buy moved into `owner`'s account, or None when
-    the transaction cannot be read back or shows no tokens received."""
+async def _read_landed(client: RpcClient, signature: str) -> dict | None:
+    """The landed transaction, or None if it failed or cannot be read back."""
     for attempt in range(_TX_READ_ATTEMPTS):
         try:
             tx = await client.get_transaction(signature)
         except RuntimeError:
             return None
         if tx is not None:
-            if tx["err"]:
-                return None
-            delta = token_delta(tx, owner, mint)
-            return delta if delta is not None and delta > 0 else None
+            return None if tx["err"] else tx
         if attempt < _TX_READ_ATTEMPTS - 1:
             await asyncio.sleep(1)
     return None
+
+
+async def confirmed_token_delta(
+    client: RpcClient, signature: str, owner: Pubkey, mint: Pubkey
+) -> int | None:
+    """Raw tokens a confirmed buy moved into `owner`'s account, or None when
+    the transaction cannot be read back or shows no tokens received."""
+    tx = await _read_landed(client, signature)
+    if tx is None:
+        return None
+    delta = token_delta(tx, owner, mint)
+    return delta if delta is not None and delta > 0 else None
+
+
+async def confirmed_quote_received(
+    client: RpcClient,
+    signature: str,
+    owner: Pubkey,
+    quote_mint: Pubkey,
+    *,
+    sol_quote: bool,
+    rent_returned: int = 0,
+) -> int | None:
+    """Raw quote a confirmed sell paid `owner`, or None when it can't be read back.
+
+    A SOL payout is the payer's lamport change plus the fee it paid, less any
+    token-account rent the same transaction returned; `owner` signs and pays
+    for the sells this CLI sends, so it is account 0. Any other quote asset is
+    the change in `owner`'s balance of `quote_mint`.
+    """
+    tx = await _read_landed(client, signature)
+    if tx is None:
+        return None
+    if sol_quote:
+        pre, post = tx.get("pre_balances"), tx.get("post_balances")
+        if not pre or not post or tx.get("fee") is None:
+            return None
+        received = post[0] - pre[0] + tx["fee"] - rent_returned
+    else:
+        received = token_delta(tx, owner, quote_mint)
+    return received if received is not None and received > 0 else None
 
 
 def close_if_emptied(

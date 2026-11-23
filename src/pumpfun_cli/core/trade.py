@@ -13,6 +13,7 @@ from spl.token.instructions import create_idempotent_associated_token_account
 from pumpfun_cli.core.amounts import (
     amount_fields,
     close_if_emptied,
+    confirmed_quote_received,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -439,6 +440,18 @@ async def sell_token(
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, PUMP_SLIPPAGE_ERROR_CODES)
+        received = (
+            await confirmed_quote_received(
+                client,
+                sig,
+                user,
+                quote_mint,
+                sol_quote=is_sol(quote_mint),
+                rent_returned=closed.get("rent_recovered_sol_raw", 0),
+            )
+            if confirm
+            else None
+        )
         return _tx_result(
             "sell",
             sig,
@@ -448,7 +461,7 @@ async def sell_token(
             quote_mint=str(quote_mint),
             quote_symbol=symbol,
             **amount_fields("tokens_sold", token_amount, TOKEN_DECIMALS),
-            quote_received=quote_out / 10**quote_decimals,
+            **received_fields("quote_received", received, quote_out, quote_decimals),
             **partial,
             **closed,
         )

@@ -131,7 +131,12 @@ async def test_get_transaction_reads_v1_result(respx_mock):
                     "blockTime": 99,
                     "version": 1,
                     "transaction": ["AAAA", "base64"],
-                    "meta": {"err": None, "fee": 5000},
+                    "meta": {
+                        "err": None,
+                        "fee": 5000,
+                        "preBalances": [100, 1],
+                        "postBalances": [95, 1],
+                    },
                 },
             },
         )
@@ -148,6 +153,8 @@ async def test_get_transaction_reads_v1_result(respx_mock):
         "block_time": 99,
         "pre_token_balances": None,
         "post_token_balances": None,
+        "pre_balances": [100, 1],
+        "post_balances": [95, 1],
     }
     body = respx_mock.calls.last.request.content
     assert b'"maxSupportedTransactionVersion":1' in body.replace(b" ", b"")
