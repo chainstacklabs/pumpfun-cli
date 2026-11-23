@@ -526,6 +526,33 @@ def _sweeps(sent: dict) -> list:
     ]
 
 
+def _land_sweeps(client: FakeClient, creator: Pubkey, fees: dict, then_raise=None) -> None:
+    """Make sweep-only transactions move their fees into the creator's vaults, as on
+    chain; `fees` maps a curve's mint or a pool's address to its waiting fee.
+    `then_raise` is raised after the first one lands, as when a confirmation is lost."""
+    real_send = client.send_tx
+    amm_ata = find_ata(derive_amm_creator_vault(creator), WSOL_MINT, TOKEN_PROGRAM)
+
+    async def send(instructions, signers, **kw):
+        sig = await real_send(instructions, signers, **kw)
+        sweeps = _sweeps({"instructions": instructions})
+        if sweeps and len(sweeps) == len(instructions):
+            for ix in sweeps:
+                key = next(m.pubkey for m in ix.accounts if m.pubkey in fees)
+                if ix.program_id == PUMP_PROGRAM:
+                    vault = derive_creator_vault(creator)
+                    client.balances[vault] = client.balances.get(vault, 0) + fees[key]
+                else:
+                    client.token_balances[amm_ata] = (
+                        client.token_balances.get(amm_ata, 0) + fees[key]
+                    )
+            if then_raise is not None:
+                raise then_raise
+        return sig
+
+    client.send_tx = send
+
+
 async def test_collect_sweeps_fees_waiting_on_curves_and_pools_first(tmp_keystore):
     user = _user_from(tmp_keystore)
     client = FakeClient()
@@ -571,6 +598,7 @@ async def test_collect_sweeps_every_waiting_coin(tmp_keystore):
     client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
     fees = [1_000 * (i + 1) for i in range(2 * MAX_SWEEPS + 3)]
     mints = {_waiting_curve(client, user, fee): fee for fee in fees}
+    _land_sweeps(client, user, mints)
     with _patched(client):
         result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
     ahead, collect = client.sent[:-1], client.sent[-1]
@@ -584,6 +612,27 @@ async def test_collect_sweeps_every_waiting_coin(tmp_keystore):
     assert result["coins_swept"] == len(fees)
     assert result["pump_recovered"] == sum(fees) / 10**9
     assert "coins_still_waiting" not in result
+
+
+async def test_a_sweep_that_landed_unconfirmed_is_still_collected(tmp_keystore):
+    """A lost confirmation doesn't mean the sweep failed: the vaults are read again,
+    so a pool's fees that reached an empty PumpSwap vault still get collected."""
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
+    fees = {
+        _waiting_curve(client, user, 1_000_000 * (i + 2)): 1_000_000 * (i + 2)
+        for i in range(MAX_SWEEPS)
+    }
+    pool = _waiting_pool(client, user, 500)
+    fees[pool] = 500
+    _land_sweeps(client, user, fees, then_raise=RuntimeError("Sent x but could not confirm it"))
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    collect = client.sent[-1]["instructions"]
+    assert any(bytes(ix.data[:8]) == COLLECT_COIN_CREATOR_FEE_DISCRIMINATOR for ix in collect)
+    assert result["pumpswap_recovered"] == 500 / 10**9
+    assert "outcome is unknown" in result["sweep_warning"]
 
 
 async def test_a_failed_sweep_ahead_still_collects_what_landed(tmp_keystore):

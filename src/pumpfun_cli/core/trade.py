@@ -26,7 +26,11 @@ from pumpfun_cli.protocol.address import (
     find_ata,
     find_user_volume_accumulator,
 )
-from pumpfun_cli.protocol.client import RpcClient, TransactionFailedError
+from pumpfun_cli.protocol.client import (
+    RpcClient,
+    TransactionFailedError,
+    TransactionNotSentError,
+)
 from pumpfun_cli.protocol.contracts import (
     ATA_RENT_LAMPORTS,
     LAMPORTS_PER_SOL,
@@ -631,11 +635,34 @@ async def _sweep_ahead(
                 priority_fee=priority_fee if priority_fee is not None else DEFAULT_PRIORITY_FEE,
                 compute_units=SWEEP_COMPUTE_UNITS * len(chunk),
             )
-        except RuntimeError as exc:
+        except (TransactionFailedError, TransactionNotSentError) as exc:
             left = len(waiting) - len(swept)
             return swept, f"{left} coin(s) not swept, their fees still wait on them: {exc}"
+        except RuntimeError as exc:
+            return (
+                swept,
+                f"A sweep's outcome is unknown ({exc}); collected what reached the vaults.",
+            )
         swept += chunk
     return swept, None
+
+
+async def _vault_balances(
+    client: RpcClient, creator: Pubkey, quote_mint: Pubkey, quote_program: Pubkey
+) -> tuple[int, int]:
+    """Collectable fees in the creator's pump.fun and PumpSwap vaults, as of "confirmed".
+
+    A SOL pump.fun vault holds lamports itself and keeps its rent-exempt
+    minimum; any other quote sits in the vault's ATA.
+    """
+    vault = derive_creator_vault(creator)
+    if is_sol(quote_mint):
+        rent_floor = await client.get_minimum_balance_for_rent_exemption(0)
+        pump = max(0, await client.get_balance(vault, commitment="confirmed") - rent_floor)
+    else:
+        pump = (await client.get_token_account(find_ata(vault, quote_mint, quote_program))).amount
+    amm_ata = find_ata(derive_amm_creator_vault(creator), quote_mint, quote_program)
+    return pump, (await client.get_token_account(amm_ata)).amount
 
 
 async def collect_creator_fees(
@@ -663,20 +690,8 @@ async def collect_creator_fees(
         _, quote_decimals = await get_mint_info(client, quote_mint)
         instructions = []
 
-        # pump.fun: a SOL vault holds lamports itself, and keeps its rent-exempt
-        # minimum; any other quote sits in the vault's ATA.
-        vault = derive_creator_vault(creator)
-        if is_sol(quote_mint):
-            rent_floor = await client.get_minimum_balance_for_rent_exemption(0)
-            pump_balance = max(0, await client.get_balance(vault) - rent_floor)
-        else:
-            pump_balance = await client.get_token_account_balance(
-                find_ata(vault, quote_mint, quote_program)
-            )
-
-        amm_vault = derive_amm_creator_vault(creator)
-        pumpswap_balance = await client.get_token_account_balance(
-            find_ata(amm_vault, quote_mint, quote_program)
+        pump_balance, pumpswap_balance = await _vault_balances(
+            client, creator, quote_mint, quote_program
         )
 
         search_failed = False
@@ -692,9 +707,14 @@ async def collect_creator_fees(
         swept_first, sweep_failure = await _sweep_ahead(
             client, keypair, extra, quote_mint, quote_program, priority_fee
         )
+        if extra:
+            # Whatever the extra sweeps reported, what landed is in the vaults now.
+            pump_balance, pumpswap_balance = await _vault_balances(
+                client, creator, quote_mint, quote_program
+            )
+        pump_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingCurve))
+        pumpswap_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingPool))
         swept = [*sweeps, *swept_first]
-        pump_balance += sum(w.amount for w in swept if isinstance(w, WaitingCurve))
-        pumpswap_balance += sum(w.amount for w in swept if isinstance(w, WaitingPool))
 
         if pump_balance <= 0 and pumpswap_balance <= 0:
             if search_failed:

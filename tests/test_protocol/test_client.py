@@ -208,3 +208,65 @@ async def test_get_transaction_non_json_is_a_runtime_error(respx_mock):
             await client.get_transaction(_SIG)
     finally:
         await client.close()
+
+
+def _sending_client():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from solders.hash import Hash
+    from solders.keypair import Keypair
+    from solders.system_program import TransferParams, transfer
+
+    payer = Keypair()
+    ix = transfer(TransferParams(from_pubkey=payer.pubkey(), to_pubkey=payer.pubkey(), lamports=1))
+    client = RpcClient("http://secret-key.rpc")
+    client.rpc = MagicMock()
+    client.rpc.get_latest_blockhash = AsyncMock(
+        return_value=SimpleNamespace(value=SimpleNamespace(blockhash=Hash.default()))
+    )
+    return client, ix, payer
+
+
+@pytest.mark.asyncio
+async def test_no_blockhash_means_nothing_was_sent():
+    from unittest.mock import AsyncMock
+
+    from pumpfun_cli.protocol.client import TransactionNotSentError
+
+    client, ix, payer = _sending_client()
+    client.rpc.get_latest_blockhash = AsyncMock(side_effect=OSError("http://secret-key.rpc down"))
+    with pytest.raises(TransactionNotSentError, match="nothing was sent") as info:
+        await client.send_tx([ix], [payer])
+    assert "secret-key" not in str(info.value)
+    assert info.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_a_refused_send_is_not_sent_and_says_why():
+    from unittest.mock import AsyncMock
+
+    from solana.rpc.core import RPCException
+
+    from pumpfun_cli.protocol.client import TransactionNotSentError
+
+    client, ix, payer = _sending_client()
+    client.rpc.send_transaction = AsyncMock(side_effect=RPCException("Blockhash not found"))
+    with pytest.raises(TransactionNotSentError, match="Blockhash not found"):
+        await client.send_tx([ix], [payer])
+
+
+@pytest.mark.asyncio
+async def test_a_send_that_timed_out_may_still_land():
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from pumpfun_cli.protocol.client import TransactionNotSentError
+
+    client, ix, payer = _sending_client()
+    client.rpc.send_transaction = AsyncMock(side_effect=httpx.ReadTimeout("http://secret-key.rpc"))
+    with pytest.raises(RuntimeError, match="may still land") as info:
+        await client.send_tx([ix], [payer])
+    assert not isinstance(info.value, TransactionNotSentError)
+    assert "secret-key" not in str(info.value) and info.value.__context__ is None

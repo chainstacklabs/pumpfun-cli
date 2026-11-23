@@ -4,7 +4,7 @@ import re
 
 import httpx
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.core import TokenAccountOpts, TxOptsModel
+from solana.rpc.core import RPCException, TokenAccountOpts, TxOptsModel
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
 from solders.instruction import Instruction
@@ -74,6 +74,10 @@ _ERR_PATTERNS = (
     r"InstructionError\(\((\d+),.*InstructionErrorCustom\((\d+)\)",
     r"'InstructionError': \[(\d+), \{'Custom': (\d+)\}\]",
 )
+
+
+class TransactionNotSentError(RuntimeError):
+    """The transaction never reached the network: nothing ran and nothing was spent."""
 
 
 class TransactionFailedError(RuntimeError):
@@ -210,7 +214,22 @@ class RpcClient:
         return resp.value
 
     async def _send_and_confirm(self, tx: VersionedTransaction, confirm: bool) -> str:
-        resp = await self.rpc.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
+        # Errors are raised outside the handlers so the originals, whose text can
+        # carry the RPC URL, aren't chained onto them.
+        refused = unknown = None
+        try:
+            resp = await self.rpc.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
+        except RPCException as exc:  # a JSON-RPC error: the node turned it down
+            refused = str(exc)
+        except Exception as exc:  # noqa: BLE001 - e.g. a timeout after the node took it
+            unknown = type(exc).__name__
+        if refused is not None:
+            raise TransactionNotSentError(f"The RPC refused the transaction: {refused}")
+        if unknown is not None:
+            raise RuntimeError(
+                f"Sending {tx.signatures[0]} failed ({unknown}); the RPC may have taken it,"
+                " so it may still land."
+            )
         signature = str(resp.value)
         if confirm:
             try:
@@ -239,7 +258,15 @@ class RpcClient:
 
         Sent as v0 when it fits, otherwise as v1; see `build_message`.
         """
-        blockhash = await self.get_blockhash()
+        failure = None
+        try:
+            blockhash = await self.get_blockhash()
+        except Exception as exc:  # noqa: BLE001 - its text can carry the RPC URL
+            failure = type(exc).__name__
+        if failure is not None:
+            raise TransactionNotSentError(
+                f"Couldn't get a recent blockhash from the RPC ({failure}); nothing was sent."
+            )
         msg = build_message(
             signers[0].pubkey(), instructions, blockhash, compute_units, priority_fee
         )
