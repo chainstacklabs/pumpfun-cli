@@ -10,7 +10,8 @@ tone_instructions: >-
 
 reviews:
   profile: "assertive"
-  request_changes_workflow: true
+  auto_approvals:
+    enabled: true
   high_level_summary: true
   poem: false
   review_status: true
