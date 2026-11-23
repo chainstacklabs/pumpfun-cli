@@ -191,6 +191,21 @@ def test_v2_accounts_follow_quote_mint_and_programs():
     assert find_sharing_config(MINT) in keys
 
 
+def test_normal_fee_recipients_are_the_rotated_set():
+    # pump.fun's FEE_RECIPIENT_ROTATION.md: the set in force from 2026-11-25.
+    rotated = {
+        "2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp",
+        "DrcDxWxLi3i7Yd7cTyCyd44DE7pwS9BvFxSsPx1c7XTv",
+        "EAN7utdjyxhKVaqA69DRyxW5ffBhnidRZfifmfhwUgPm",
+        "Fso3Ggq2Um1pQT6Uzq8wDicgRh62vANYZUT8uqJd2fXh",
+        "BWNNnhN6id5j71h5wfkzmXjnV2fgF9zA61FqGJJjnakw",
+        "Eh7hTLi6iMbT55jAEYVgtN5QaSb6z9Ytzwxs2LGG5qg4",
+        "3Mqk6qHEj7r3TFNFYjCP85a5venbp2mefYQTSKVVchBC",
+        "A3cm36KqisUXVTSRCK6VQ7kvXLene4gsbQedhcd5MujQ",
+    }
+    assert {str(k) for k in NORMAL_FEE_RECIPIENTS} == rotated
+
+
 @pytest.mark.parametrize(
     "mayhem,pool", [(False, NORMAL_FEE_RECIPIENTS), (True, RESERVED_FEE_RECIPIENTS)]
 )

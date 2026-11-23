@@ -15,6 +15,7 @@ from pumpfun_cli.protocol.contracts import (
     GLOBALCONFIG_PROTOCOL_FEE_BPS_OFFSET,
     GLOBALCONFIG_PROTOCOL_FEE_RECIPIENTS_OFFSET,
     GLOBALCONFIG_RESERVED_FEE_RECIPIENT_OFFSET,
+    NORMAL_FEE_RECIPIENTS,
     POOL_CASHBACK_OFFSET,
     POOL_CREATOR_FEES_OFFSET,
     POOL_MAYHEM_MODE_OFFSET,
@@ -136,12 +137,14 @@ def pick_fee_recipients(config: dict, is_mayhem_mode: bool) -> tuple[Pubkey, Pub
     """(protocol fee recipient, buyback fee recipient) for one trade.
 
     A mayhem pool pays GlobalConfig's reserved recipient; any other pool pays
-    one of the eight protocol recipients, picked at random to spread contention.
+    one of the eight normal recipients, picked at random to spread contention.
+    GlobalConfig may still list the set retired on 2026-11-25, so the normal
+    one comes from `NORMAL_FEE_RECIPIENTS`, not from GlobalConfig.
     """
     if is_mayhem_mode:
         fee_recipient = config["reserved_fee_recipient"]
     else:
-        fee_recipient = random.choice(config["protocol_fee_recipients"])
+        fee_recipient = random.choice(NORMAL_FEE_RECIPIENTS)
     return fee_recipient, random.choice(config["buyback_fee_recipients"])
 
 

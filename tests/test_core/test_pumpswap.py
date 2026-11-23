@@ -12,6 +12,7 @@ from pumpfun_cli.protocol.address import (
 )
 from pumpfun_cli.protocol.client import TransactionFailedError
 from pumpfun_cli.protocol.contracts import (
+    NORMAL_FEE_RECIPIENTS,
     PUMP_AMM_PROGRAM,
     PUMPSWAP_BUY_EXACT_QUOTE_IN_DISCRIMINATOR,
     PUMPSWAP_INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR,
@@ -23,7 +24,6 @@ from pumpfun_cli.protocol.contracts import (
 from tests.test_core.helpers import (
     BUYBACK_RECIPIENTS,
     COIN,
-    PROTOCOL_RECIPIENTS,
     RESERVED_RECIPIENT,
     FakeClient,
     add_pool,
@@ -96,7 +96,7 @@ async def test_buy_sol_pool(tmp_keystore):
     assert int.from_bytes(bytes(swap.data[8:16]), "little") == 10_000_000
     keys = [m.pubkey for m in swap.accounts]
     assert keys[0] == pool["address"]
-    assert keys[9] in PROTOCOL_RECIPIENTS
+    assert keys[9] in NORMAL_FEE_RECIPIENTS
     assert keys[-2] in BUYBACK_RECIPIENTS
     assert derive_amm_pool_v2(COIN) in keys
     # The accumulator is missing on this chain, so it is initialized first.
