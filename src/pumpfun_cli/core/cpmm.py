@@ -252,8 +252,7 @@ async def buy_cpmm(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except _NoPool as exc:
         return exc.result
@@ -384,8 +383,7 @@ async def sell_cpmm(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except _NoPool as exc:
         return exc.result

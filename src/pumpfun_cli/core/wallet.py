@@ -145,8 +145,7 @@ async def transfer_sol(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     finally:
         await client.close()
@@ -210,8 +209,7 @@ async def transfer_all_sol(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     finally:
         await client.close()
@@ -296,8 +294,7 @@ async def transfer_token(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     finally:
         await client.close()
@@ -392,8 +389,7 @@ async def close_empty_atas(
                 "explorer": f"https://solscan.io/tx/{signatures[0]}",
             }
         )
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     finally:
         await client.close()

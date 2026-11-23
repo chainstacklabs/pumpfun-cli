@@ -4,6 +4,7 @@ import asyncio
 
 import typer
 
+from pumpfun_cli.commands.sending import confirm_option, fast_option, outcome, wait_for_outcome
 from pumpfun_cli.core.cpmm import buy_cpmm, sell_cpmm
 from pumpfun_cli.core.launchlab import buy_launchlab, sell_launchlab
 from pumpfun_cli.core.pumpswap import buy_pumpswap, sell_pumpswap
@@ -110,12 +111,14 @@ def buy(
         "--force-amm",
         help="Skip the bonding curve, buy in the pool (PumpSwap, or CPMM for LaunchLab coins)",
     ),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Simulate trade without sending transaction"
     ),
 ):
     """Buy tokens, spending an exact amount of the coin's quote asset."""
+    confirm = wait_for_outcome(fast, confirm)
     _validate_mint(mint)
     if amount <= 0:
         error("Amount must be greater than 0.", hint=f"Got: {amount}", exit_code=2)
@@ -168,8 +171,11 @@ def buy(
     state = ctx.obj
     if not render(result, state.json_mode):
         typer.echo(
-            f"Bought {result['tokens_received']:.2f} tokens"
-            f" for {result['quote_spent']} {result['quote_symbol']}"
+            outcome(
+                result,
+                f"Bought {result['tokens_received']:.2f} tokens"
+                f" for {result['quote_spent']} {result['quote_symbol']}",
+            )
         )
         typer.echo(f"TX: {result['explorer']}")
 
@@ -186,12 +192,14 @@ def sell(
         "--force-amm",
         help="Skip the bonding curve, sell in the pool (PumpSwap, or CPMM for LaunchLab coins)",
     ),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Simulate trade without sending transaction"
     ),
 ):
     """Sell tokens for the coin's quote asset (SOL for most coins)."""
+    confirm = wait_for_outcome(fast, confirm)
     _validate_mint(mint)
     _validate_slippage(slippage)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
@@ -245,8 +253,11 @@ def sell(
     state = ctx.obj
     if not render(result, state.json_mode):
         typer.echo(
-            f"Sold {result['tokens_sold']:.2f} tokens"
-            f" for {result['quote_received']:.6f} {result['quote_symbol']}"
+            outcome(
+                result,
+                f"Sold {result['tokens_sold']:.2f} tokens"
+                f" for {result['quote_received']:.6f} {result['quote_symbol']}",
+            )
         )
         if "tokens_kept" in result:
             typer.echo(
@@ -267,9 +278,11 @@ _QUOTE_MINT_HELP = "Quote asset mint to act on (default: SOL)"
 def claim_cashback(
     ctx: typer.Context,
     quote_mint: str | None = typer.Option(None, "--quote-mint", help=_QUOTE_MINT_HELP),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Claim volume-based cashback rewards in one quote asset."""
+    confirm = wait_for_outcome(fast, confirm)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
@@ -282,15 +295,17 @@ def claim_cashback(
         error(result["message"])
     state = ctx.obj
     if not render(result, state.json_mode):
-        typer.echo("Cashback claimed!")
+        typer.echo(outcome(result, "Cashback claimed."))
         typer.echo(f"TX: {result['explorer']}")
 
 
 def close_volume_acc(
     ctx: typer.Context,
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Close volume accumulator account, recover rent."""
+    confirm = wait_for_outcome(fast, confirm)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
@@ -303,16 +318,18 @@ def close_volume_acc(
         error(result["message"])
     state = ctx.obj
     if not render(result, state.json_mode):
-        typer.echo("Volume accumulator closed, rent recovered.")
+        typer.echo(outcome(result, "Volume accumulator closed, rent recovered."))
         typer.echo(f"TX: {result['explorer']}")
 
 
 def migrate(
     ctx: typer.Context,
     mint: str = typer.Argument(..., help="Token mint address"),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Trigger migration from bonding curve to PumpSwap AMM."""
+    confirm = wait_for_outcome(fast, confirm)
     _validate_mint(mint)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
@@ -326,16 +343,18 @@ def migrate(
         error(result["message"])
     state = ctx.obj
     if not render(result, state.json_mode):
-        typer.echo(f"Migrated {result['mint']} to PumpSwap!")
+        typer.echo(outcome(result, f"Migrated {result['mint']} to PumpSwap."))
         typer.echo(f"TX: {result['explorer']}")
 
 
 def collect_creator_fee(
     ctx: typer.Context,
     quote_mint: str | None = typer.Option(None, "--quote-mint", help=_QUOTE_MINT_HELP),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Collect creator fees in one quote asset from pump.fun and PumpSwap vaults."""
+    confirm = wait_for_outcome(fast, confirm)
     rpc, keyfile, password = _require_rpc_and_wallet(ctx)
     overrides = _get_overrides(ctx)
     try:
@@ -351,6 +370,7 @@ def collect_creator_fee(
     state = ctx.obj
     if not render(result, state.json_mode):
         symbol = result["quote_symbol"]
+        typer.echo(outcome(result, "Creator fees collected."))
         typer.echo(f"Pump.fun fees: {result['pump_recovered']:.6f} {symbol}")
         typer.echo(f"PumpSwap fees: {result['pumpswap_recovered']:.6f} {symbol}")
         if result.get("sweep_warning"):

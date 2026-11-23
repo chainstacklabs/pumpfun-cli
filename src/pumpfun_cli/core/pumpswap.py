@@ -234,8 +234,7 @@ async def buy_pumpswap(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except PoolNotFoundError as exc:
         # Same error as before, marked so a caller can tell "no pool" apart.
@@ -372,8 +371,7 @@ async def sell_pumpswap(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except PoolNotFoundError as exc:
         # Same error as before, marked so a caller can tell "no pool" apart.

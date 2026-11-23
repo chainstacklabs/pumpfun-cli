@@ -111,8 +111,7 @@ def _tx_result(action: str, sig: str, confirm: bool, **fields) -> dict:
         "signature": sig,
         "explorer": f"https://solscan.io/tx/{sig}",
     }
-    if confirm:
-        result["confirmed"] = True
+    result["confirmed"] = confirm
     return result
 
 

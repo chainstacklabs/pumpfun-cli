@@ -291,8 +291,7 @@ async def buy_launchlab(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except (RuntimeError, ValueError) as exc:
         return {"error": "launchlab_error", "message": str(exc)}
@@ -431,8 +430,7 @@ async def sell_launchlab(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except (RuntimeError, ValueError) as exc:
         return {"error": "launchlab_error", "message": str(exc)}

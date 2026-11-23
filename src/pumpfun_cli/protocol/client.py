@@ -1,5 +1,6 @@
 """Stateless Solana RPC client for CLI usage."""
 
+import asyncio
 import re
 
 import httpx
@@ -13,11 +14,18 @@ from solders.message import MessageV0, MessageV1, TransactionConfig
 from solders.pubkey import Pubkey
 from solders.signature import Signature
 from solders.transaction import VersionedTransaction
+from solders.transaction_status import TransactionConfirmationStatus
 
 from pumpfun_cli.protocol.contracts import TX_V1_LOADED_ACCOUNTS_DATA_LIMIT
 from pumpfun_cli.protocol.token_account import TokenHolding, parse_token_account
 
 DEFAULT_RPC_TIMEOUT = 30.0
+
+# Waiting for a sent transaction: how often to look, and how long the RPC may
+# fail to answer before the outcome is given up as unknown.
+CONFIRM_POLL_SECONDS = 1.0
+CONFIRM_RPC_SILENCE_SECONDS = 60.0
+_LANDED = (TransactionConfirmationStatus.Confirmed, TransactionConfirmationStatus.Finalized)
 
 # Serialized size limits: a v0 transaction must fit one 1232-byte packet, a v1
 # transaction may carry up to 4096 bytes.
@@ -78,6 +86,16 @@ _ERR_PATTERNS = (
 
 class TransactionNotSentError(RuntimeError):
     """The transaction never reached the network: nothing ran and nothing was spent."""
+
+
+class TransactionExpiredError(RuntimeError):
+    """The transaction's blockhash expired before it landed: it never ran and cost nothing."""
+
+    def __init__(self, signature: str) -> None:
+        super().__init__(
+            f"Transaction {signature} did not land before its blockhash expired."
+            " It never ran and nothing was spent; it is safe to send again."
+        )
 
 
 class TransactionFailedError(RuntimeError):
@@ -216,39 +234,71 @@ class RpcClient:
         resp = await self.rpc.get_program_accounts(program_id, encoding="base64", filters=filters)
         return resp.value
 
-    async def _send_and_confirm(self, tx: VersionedTransaction, confirm: bool) -> str:
+    async def _send_and_confirm(
+        self, tx: VersionedTransaction, confirm: bool, last_valid_block_height: int
+    ) -> str:
         # Errors are raised outside the handlers so the originals, whose text can
         # carry the RPC URL, aren't chained onto them.
+        signature = tx.signatures[0]
         refused = unknown = None
         try:
-            resp = await self.sender.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
+            await self.sender.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
         except RPCException as exc:  # a JSON-RPC error: the node turned it down
             refused = str(exc)
         except Exception as exc:  # noqa: BLE001 - e.g. a timeout after the node took it
             unknown = type(exc).__name__
         if refused is not None:
             raise TransactionNotSentError(f"The RPC refused the transaction: {refused}")
-        if unknown is not None:
+        if unknown is not None and not confirm:
             raise RuntimeError(
-                f"Sending {tx.signatures[0]} failed ({unknown}); the RPC may have taken it,"
+                f"Sending {signature} failed ({unknown}); the RPC may have taken it,"
                 " so it may still land."
             )
-        signature = str(resp.value)
+        # A send that may have reached the node is waited on like any other:
+        # it lands, fails, or expires.
         if confirm:
+            await self._await_outcome(signature, last_valid_block_height)
+        return str(signature)
+
+    async def _await_outcome(self, signature: Signature, last_valid_block_height: int) -> None:
+        """Wait until the transaction lands, or until it no longer can.
+
+        Returns once it is confirmed without error. Raises TransactionFailedError
+        if it landed and failed, TransactionExpiredError once the chain is past its
+        blockhash and no node has it, and RuntimeError if the RPC stops answering
+        for `CONFIRM_RPC_SILENCE_SECONDS`.
+        """
+        loop = asyncio.get_running_loop()
+        silent_since = None
+        while True:
             try:
-                confirmed = await self.rpc.confirm_transaction(
-                    resp.value, commitment="confirmed", sleep_seconds=1
-                )
-            except Exception as exc:  # noqa: BLE001 - the send already happened
-                raise RuntimeError(
-                    f"Sent {signature} but could not confirm it ({type(exc).__name__}). "
-                    f"Check it with: pumpfun tx-status {signature}"
-                ) from None
-            # The confirmed status carries the on-chain result.
-            landed = confirmed.value[0]
-            if landed is not None and landed.err is not None:
-                raise TransactionFailedError(landed.err)
-        return signature
+                status = (await self.rpc.get_signature_statuses([signature])).value[0]
+                if status is None:
+                    height = (await self.rpc.get_block_height(commitment="confirmed")).value
+                    if height > last_valid_block_height:
+                        # Too late to land; make sure no node saw it land first.
+                        history = await self.rpc.get_signature_statuses(
+                            [signature], search_transaction_history=True
+                        )
+                        status = history.value[0]
+                        if status is None:
+                            raise TransactionExpiredError(str(signature))
+                silent_since = None
+            except (TransactionExpiredError, TransactionFailedError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - one unanswered poll is not an outcome
+                silent_since = silent_since or loop.time()
+                if loop.time() - silent_since > CONFIRM_RPC_SILENCE_SECONDS:
+                    raise RuntimeError(
+                        f"Sent {signature}, but the RPC stopped answering"
+                        f" ({type(exc).__name__}), so whether it landed is unknown."
+                    ) from None
+                status = None
+            if status is not None and status.confirmation_status in _LANDED:
+                if status.err:
+                    raise TransactionFailedError(status.err)
+                return
+            await asyncio.sleep(CONFIRM_POLL_SECONDS)
 
     async def send_tx(
         self,
@@ -264,7 +314,7 @@ class RpcClient:
         """
         failure = None
         try:
-            blockhash = await self.get_blockhash()
+            latest = (await self.rpc.get_latest_blockhash()).value
         except Exception as exc:  # noqa: BLE001 - its text can carry the RPC URL
             failure = type(exc).__name__
         if failure is not None:
@@ -272,9 +322,11 @@ class RpcClient:
                 f"Couldn't get a recent blockhash from the RPC ({failure}); nothing was sent."
             )
         msg = build_message(
-            signers[0].pubkey(), instructions, blockhash, compute_units, priority_fee
+            signers[0].pubkey(), instructions, latest.blockhash, compute_units, priority_fee
         )
-        return await self._send_and_confirm(VersionedTransaction(msg, signers), confirm)
+        return await self._send_and_confirm(
+            VersionedTransaction(msg, signers), confirm, latest.last_valid_block_height
+        )
 
     async def get_transaction(self, signature_str: str) -> dict | None:
         """Fetch a confirmed transaction's outcome by signature.

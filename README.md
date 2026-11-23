@@ -71,12 +71,14 @@ The wallet is stored encrypted in `~/.config/pumpfun-cli/wallet.enc`, and the co
 ```bash
 pumpfun info <mint>                 # where it trades, price, quote asset
 pumpfun buy <mint> 0.1 --dry-run    # preview: nothing is sent
-pumpfun buy <mint> 0.1 --confirm    # spend exactly 0.1 of the coin's quote asset
-pumpfun sell <mint> all --confirm
+pumpfun buy <mint> 0.1              # spend exactly 0.1 of the coin's quote asset
+pumpfun sell <mint> all
 pumpfun tx-status <signature>       # did it land?
 ```
 
 `--json` makes any command answer in JSON; it is on automatically when the output is piped.
+
+Every command that sends a transaction waits for it to land and reports what happened on chain: the amounts, or the error it failed with. A transaction that can no longer land (its blockhash expired) is reported as such; it cost nothing and is safe to send again. `--fast` sends without waiting, for when latency matters more than knowing the result: the output then says the transaction was sent but not confirmed (`"confirmed": false`). `wallet drain` always waits.
 
 ### 5. Launch a coin
 
@@ -93,12 +95,12 @@ Token info (requires RPC):
   pumpfun info <mint> [--timeout S]       Venue, price, bonding progress, reserves
 
 Trading (requires RPC + wallet):
-  pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--confirm]
-  pumpfun sell <mint> <amount|all> [--slippage N] [--force-amm] [--dry-run] [--confirm]
-  pumpfun migrate <mint> [--confirm]
-  pumpfun claim-cashback [--quote-mint M] [--confirm]
-  pumpfun collect-creator-fee [--quote-mint M] [--confirm]
-  pumpfun close-volume-acc [--confirm]
+  pumpfun buy <mint> <amount> [--slippage N] [--force-amm] [--dry-run] [--fast]
+  pumpfun sell <mint> <amount|all> [--slippage N] [--force-amm] [--dry-run] [--fast]
+  pumpfun migrate <mint> [--fast]
+  pumpfun claim-cashback [--quote-mint M] [--fast]
+  pumpfun collect-creator-fee [--quote-mint M] [--fast]
+  pumpfun close-volume-acc [--fast]
 
 Transaction inspection (requires RPC):
   pumpfun tx-status <signature>           Confirmation status, slot, fee, errors
@@ -106,7 +108,7 @@ Transaction inspection (requires RPC):
 Token launch (requires RPC + wallet):
   pumpfun launch --name X --ticker Y [--uri U | --desc D --image P] [--buy N]
                  [--quote-mint M] [--creator-fee-bps N] [--holder-reward]
-                 [--mayhem] [--slippage N] [--confirm]
+                 [--mayhem] [--slippage N] [--fast]
 
 Token discovery (price and progress added when an RPC is set):
   pumpfun tokens trending [--limit N]     pump.fun's movers board
@@ -174,7 +176,7 @@ A sell that empties the coin's token account (`all`, or exactly the balance) clo
 
 ### Amounts in JSON output
 
-An exact amount comes twice: in whole units for reading (`tokens_sold`) and as the integer in raw units (`tokens_sold_raw`). Use the `_raw` field for anything that has to add up; the float can drop a unit. An amount known only as an estimate has no `_raw` twin: `quote_received`, the `collect-creator-fee` totals, and `tokens_received` unless the buy ran with `--confirm`, in which case it is read from the confirmed transaction. If that transaction cannot be read back, a confirmed buy also reports the estimate without `tokens_received_raw`, so check for the field. Dry-run fields (`expected_tokens_raw`, `expected_quote_raw`, `min_*_out_raw`) are exact integers of the quote the transaction would be built from, not executed amounts.
+An exact amount comes twice: in whole units for reading (`tokens_sold`) and as the integer in raw units (`tokens_sold_raw`). Use the `_raw` field for anything that has to add up; the float can drop a unit. An amount known only as an estimate has no `_raw` twin: `quote_received`, the `collect-creator-fee` totals, and `tokens_received` after a `--fast` buy; otherwise it is read from the confirmed transaction. If that transaction cannot be read back, a buy also reports the estimate without `tokens_received_raw`, so check for the field. Dry-run fields (`expected_tokens_raw`, `expected_quote_raw`, `min_*_out_raw`) are exact integers of the quote the transaction would be built from, not executed amounts.
 
 An error comes back as `{"error": <message>, "hint": ..., "exit_code": ...}` with a non-zero exit status.
 
