@@ -593,6 +593,51 @@ COLLECT_COMPUTE_UNITS = 150_000
 SWEEP_COMPUTE_UNITS = 40_000
 
 
+def _sweep_instruction(w, creator: Pubkey, quote_mint: Pubkey, quote_program: Pubkey):
+    """Move one coin's waiting creator fee into the creator's vault."""
+    if isinstance(w, WaitingCurve):
+        return build_sweep_creator_fee_instruction(
+            payer=creator,
+            mint=w.mint,
+            creator=creator,
+            quote_mint=quote_mint,
+            quote_token_program=quote_program,
+        )
+    return build_pumpswap_sweep_creator_fee_instruction(
+        payer=creator, pool_address=w.address, pool=w.pool, quote_token_program=quote_program
+    )
+
+
+async def _sweep_ahead(
+    client: RpcClient,
+    keypair,
+    waiting: list,
+    quote_mint: Pubkey,
+    quote_program: Pubkey,
+    priority_fee: int | None,
+) -> tuple[list, str | None]:
+    """Sweep `waiting` in transactions of `MAX_SWEEPS`, each confirmed so its fees
+    are in the vaults before the collect. Returns what was swept, and why it
+    stopped early if it did."""
+    creator = keypair.pubkey()
+    swept = []
+    for i in range(0, len(waiting), MAX_SWEEPS):
+        chunk = waiting[i : i + MAX_SWEEPS]
+        try:
+            await client.send_tx(
+                [_sweep_instruction(w, creator, quote_mint, quote_program) for w in chunk],
+                [keypair],
+                confirm=True,
+                priority_fee=priority_fee if priority_fee is not None else DEFAULT_PRIORITY_FEE,
+                compute_units=SWEEP_COMPUTE_UNITS * len(chunk),
+            )
+        except RuntimeError as exc:
+            left = len(waiting) - len(swept)
+            return swept, f"{left} coin(s) not swept, their fees still wait on them: {exc}"
+        swept += chunk
+    return swept, None
+
+
 async def collect_creator_fees(
     rpc_url: str,
     keystore_path: str,
@@ -606,7 +651,9 @@ async def collect_creator_fees(
 
     Vaults are per creator and per quote asset, so fees earned in USDC are
     collected with a separate run. Fees still waiting on the creator's curves
-    and pools are swept into the vaults first, the largest `MAX_SWEEPS` per run.
+    and pools are swept into the vaults first: the largest `MAX_SWEEPS` in the
+    collect transaction, any others in sweep-only transactions of `MAX_SWEEPS`
+    sent and confirmed before it.
     """
     keypair = decrypt_keypair(Path(keystore_path), password)
     creator = keypair.pubkey()
@@ -641,9 +688,13 @@ async def collect_creator_fees(
             waiting_curves, waiting_pools = [], []
             search_failed = True
         waiting = sorted([*waiting_curves, *waiting_pools], key=lambda w: w.amount, reverse=True)
-        sweeps, still_waiting = waiting[:MAX_SWEEPS], len(waiting) - MAX_SWEEPS
-        pump_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingCurve))
-        pumpswap_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingPool))
+        sweeps, extra = waiting[:MAX_SWEEPS], waiting[MAX_SWEEPS:]
+        swept_first, sweep_failure = await _sweep_ahead(
+            client, keypair, extra, quote_mint, quote_program, priority_fee
+        )
+        swept = [*sweeps, *swept_first]
+        pump_balance += sum(w.amount for w in swept if isinstance(w, WaitingCurve))
+        pumpswap_balance += sum(w.amount for w in swept if isinstance(w, WaitingPool))
 
         if pump_balance <= 0 and pumpswap_balance <= 0:
             if search_failed:
@@ -661,6 +712,8 @@ async def collect_creator_fees(
         sweep_warning = (
             f"{_SEARCH_FAILED}; collected what the vaults hold." if search_failed else None
         )
+        if sweep_failure:
+            sweep_warning = sweep_failure
 
         if pumpswap_balance > 0 or not is_sol(quote_mint):
             # Both payouts land in the creator's token account for the quote asset.
@@ -669,26 +722,7 @@ async def collect_creator_fees(
                     creator, creator, quote_mint, quote_program
                 )
             )
-        for w in sweeps:
-            if isinstance(w, WaitingCurve):
-                instructions.append(
-                    build_sweep_creator_fee_instruction(
-                        payer=creator,
-                        mint=w.mint,
-                        creator=creator,
-                        quote_mint=quote_mint,
-                        quote_token_program=quote_program,
-                    )
-                )
-            else:
-                instructions.append(
-                    build_pumpswap_sweep_creator_fee_instruction(
-                        payer=creator,
-                        pool_address=w.address,
-                        pool=w.pool,
-                        quote_token_program=quote_program,
-                    )
-                )
+        instructions += [_sweep_instruction(w, creator, quote_mint, quote_program) for w in sweeps]
         if pump_balance > 0:
             instructions.append(
                 build_collect_creator_fee_v2_instruction(
@@ -726,8 +760,7 @@ async def collect_creator_fees(
             # between are collected too.
             pump_recovered=pump_balance / 10**quote_decimals,
             pumpswap_recovered=pumpswap_balance / 10**quote_decimals,
-            coins_swept=len(sweeps),
-            **({"coins_still_waiting": still_waiting} if still_waiting > 0 else {}),
+            coins_swept=len(swept),
             **({"sweep_warning": sweep_warning} if sweep_warning else {}),
         )
     finally:

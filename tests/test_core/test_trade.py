@@ -564,16 +564,50 @@ async def test_collect_sweeps_only_the_requested_quote_asset(tmp_keystore):
     assert result["error"] == "no_fees"
 
 
-async def test_collect_sweeps_the_largest_fees_and_reports_the_rest(tmp_keystore):
+async def test_collect_sweeps_every_waiting_coin(tmp_keystore):
+    """The largest go with the collect; the rest are swept, and confirmed, first."""
     user = _user_from(tmp_keystore)
     client = FakeClient()
-    fees = [1_000 * (i + 1) for i in range(MAX_SWEEPS + 3)]
+    client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
+    fees = [1_000 * (i + 1) for i in range(2 * MAX_SWEEPS + 3)]
     mints = {_waiting_curve(client, user, fee): fee for fee in fees}
     with _patched(client):
         result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
-    swept = {mints[ix.accounts[2].pubkey] for ix in _sweeps(client.sent[0])}
-    assert swept == set(sorted(fees)[-MAX_SWEEPS:])
-    assert result["coins_still_waiting"] == 3
+    ahead, collect = client.sent[:-1], client.sent[-1]
+    assert [len(_sweeps(tx)) for tx in ahead] == [MAX_SWEEPS, 3]
+    assert all(tx["confirm"] for tx in ahead)
+    assert all(len(_sweeps(tx)) == len(tx["instructions"]) for tx in ahead)
+    swept_with_collect = {mints[ix.accounts[2].pubkey] for ix in _sweeps(collect)}
+    assert swept_with_collect == set(sorted(fees)[-MAX_SWEEPS:])
+    all_swept = [mints[ix.accounts[2].pubkey] for tx in client.sent for ix in _sweeps(tx)]
+    assert sorted(all_swept) == fees
+    assert result["coins_swept"] == len(fees)
+    assert result["pump_recovered"] == sum(fees) / 10**9
+    assert "coins_still_waiting" not in result
+
+
+async def test_a_failed_sweep_ahead_still_collects_what_landed(tmp_keystore):
+    user = _user_from(tmp_keystore)
+    client = FakeClient()
+    client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
+    fees = [1_000 * (i + 1) for i in range(MAX_SWEEPS + 2)]
+    for fee in fees:
+        _waiting_curve(client, user, fee)
+    sends = []
+    real_send = client.send_tx
+
+    async def send(instructions, signers, **kw):
+        sends.append(instructions)
+        if len(sends) == 1:
+            raise TransactionFailedError({"InstructionError": [0, {"Custom": 1}]})
+        return await real_send(instructions, signers, **kw)
+
+    client.send_tx = send
+    with _patched(client):
+        result = await collect_creator_fees("http://rpc", tmp_keystore, "testpass")
+    assert result["coins_swept"] == MAX_SWEEPS
+    assert result["pump_recovered"] == sum(sorted(fees)[-MAX_SWEEPS:]) / 10**9
+    assert result["sweep_warning"].startswith("2 coin(s) not swept")
 
 
 async def test_collect_without_get_program_accounts_collects_the_vaults(tmp_keystore):

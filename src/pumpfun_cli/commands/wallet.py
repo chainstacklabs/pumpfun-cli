@@ -312,7 +312,10 @@ def wallet_close_atas(
                 f"Closed {result['closed']} empty account(s),"
                 f" recovered {sol_text(result['recovered_sol_raw'])} SOL"
             )
-            typer.echo(f"TX: {result['explorer']}")
+            for sig in result["signatures"]:
+                typer.echo(f"TX: https://solscan.io/tx/{sig}")
+        if result.get("incomplete"):
+            typer.echo(f"Stopped early: {result['incomplete']}")
         _echo_skipped(result.get("skipped", []))
 
 
@@ -377,6 +380,8 @@ def wallet_drain(
         )
     else:
         typer.echo("No empty ATAs to close.")
+    if result.get("ata_incomplete"):
+        typer.echo(f"Stopped early: {result['ata_incomplete']}")
     _echo_skipped(result.get("ata_skipped", []))
 
     if result.get("sol_error"):
