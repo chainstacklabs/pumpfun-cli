@@ -10,19 +10,24 @@ import struct
 
 from solders.pubkey import Pubkey
 
-from pumpfun_cli.protocol.contracts import BONDING_CURVE_DISCRIMINATOR, TOKEN_DECIMALS
+from pumpfun_cli.protocol.contracts import (
+    BONDING_CURVE_CREATOR_OFFSET,
+    BONDING_CURVE_DISCRIMINATOR,
+    TOKEN_DECIMALS,
+)
 from pumpfun_cli.protocol.quote import is_sol, normalize_quote_mint
 
 # Byte offsets, discriminator included.
 _RESERVES_FORMAT = (
     "<QQQQQ?"  # virtual_token, virtual_quote, real_token, real_quote, supply, complete
 )
-_CREATOR_OFFSET = 49
+_CREATOR_OFFSET = BONDING_CURVE_CREATOR_OFFSET
 _MAYHEM_OFFSET = 81
 _CASHBACK_OFFSET = 82
 _QUOTE_MINT_OFFSET = 83
 _CREATOR_FEE_BPS_OFFSET = 115
 _IS_HOLDER_REWARD_OFFSET = 124
+_CREATOR_FEE_OFFSET = 125  # u64, creator fee kept on the curve until swept
 
 
 def parse_bonding_curve(data: bytes) -> dict:
@@ -31,7 +36,8 @@ def parse_bonding_curve(data: bytes) -> dict:
     `quote_mint` comes back normalized (wrapped SOL for a SOL-paired coin).
     A field the curve is too short to carry predates that feature: `creator`,
     `creator_fee_bps` and `is_holder_reward` read as None, the mayhem and
-    cashback flags as False, and the quote asset as SOL.
+    cashback flags as False, the quote asset as SOL, and `creator_fee` (the
+    creator fee waiting on the curve for a sweep) as 0.
 
     Raises:
         ValueError: If the discriminator is wrong or the data ends before the
@@ -81,6 +87,11 @@ def parse_bonding_curve(data: bytes) -> dict:
         "is_sol_paired": is_sol(raw_quote),
         "creator_fee_bps": creator_fee_bps,
         "is_holder_reward": is_holder_reward,
+        "creator_fee": (
+            struct.unpack_from("<Q", data, _CREATOR_FEE_OFFSET)[0]
+            if len(data) >= _CREATOR_FEE_OFFSET + 8
+            else 0
+        ),
     }
 
 

@@ -104,6 +104,11 @@ PUMP_BUILDERS = [
         lambda: ix.build_migrate_v2_instruction(mint=MINT, user=USER, withdraw_authority=CREATOR),
         29,
     ),
+    (
+        "sweep_creator_fee",
+        lambda: ix.build_sweep_creator_fee_instruction(payer=USER, mint=MINT, creator=CREATOR),
+        13,
+    ),
 ]
 
 
@@ -122,6 +127,18 @@ def test_pump_builders_match_idl(name, build, count):
             lambda: ix.build_collect_coin_creator_fee_instruction(creator=USER),
         ),
         ("init_user_volume_accumulator", lambda: ix.build_init_amm_user_volume_accumulator(USER)),
+        (
+            "sweep_creator_fee",
+            lambda: ix.build_pumpswap_sweep_creator_fee_instruction(
+                payer=USER,
+                pool_address=Pubkey.new_unique(),
+                pool={
+                    "quote_mint": WSOL_MINT,
+                    "coin_creator": CREATOR,
+                    "pool_quote_token_account": Pubkey.new_unique(),
+                },
+            ),
+        ),
     ],
 )
 def test_amm_builders_match_idl(name, build):
@@ -317,6 +334,18 @@ def test_pump_builder_pdas_match_idl_seeds(name, build, count):
             lambda: ix.build_collect_coin_creator_fee_instruction(creator=USER),
         ),
         ("init_user_volume_accumulator", lambda: ix.build_init_amm_user_volume_accumulator(USER)),
+        (
+            "sweep_creator_fee",
+            lambda: ix.build_pumpswap_sweep_creator_fee_instruction(
+                payer=USER,
+                pool_address=Pubkey.new_unique(),
+                pool={
+                    "quote_mint": WSOL_MINT,
+                    "coin_creator": CREATOR,
+                    "pool_quote_token_account": Pubkey.new_unique(),
+                },
+            ),
+        ),
     ],
 )
 def test_amm_builder_pdas_match_idl_seeds(name, build):

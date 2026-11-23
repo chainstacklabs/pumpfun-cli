@@ -70,6 +70,7 @@ from pumpfun_cli.protocol.contracts import (
     RENT,
     RESERVED_FEE_RECIPIENTS,
     SELL_V2_DISCRIMINATOR,
+    SWEEP_CREATOR_FEE_DISCRIMINATOR,
     SYSTEM_PROGRAM,
     TOKEN_2022_PROGRAM,
     TOKEN_ACCOUNT_SIZE,
@@ -616,6 +617,75 @@ def build_collect_creator_fee_v2_instruction(
             _meta(SYSTEM_PROGRAM),
             _meta(PUMP_EVENT_AUTHORITY),
             _meta(PUMP_PROGRAM),
+        ],
+    )
+
+
+def build_sweep_creator_fee_instruction(
+    *,
+    payer: Pubkey,
+    mint: Pubkey,
+    creator: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+) -> Instruction:
+    """Move the creator fee waiting on a coin's curve into its creator vault.
+
+    Permissionless: `payer` only covers rent top-ups. `creator` is
+    BondingCurve.creator, whose vault the fee goes to.
+    """
+    bonding_curve = derive_bonding_curve(mint)
+    vault = derive_creator_vault(creator)
+    return Instruction(
+        PUMP_PROGRAM,
+        SWEEP_CREATOR_FEE_DISCRIMINATOR,
+        [
+            _meta(payer, writable=True, signer=True),
+            _meta(PUMP_GLOBAL),
+            _meta(mint),
+            _meta(quote_mint),
+            _meta(quote_token_program),
+            _meta(ASSOCIATED_TOKEN_PROGRAM),
+            _meta(SYSTEM_PROGRAM),
+            _meta(bonding_curve, writable=True),
+            _meta(find_ata(bonding_curve, quote_mint, quote_token_program), writable=True),
+            _meta(vault, writable=True),
+            _meta(find_ata(vault, quote_mint, quote_token_program), writable=True),
+            _meta(PUMP_EVENT_AUTHORITY),
+            _meta(PUMP_PROGRAM),
+        ],
+    )
+
+
+def build_pumpswap_sweep_creator_fee_instruction(
+    *,
+    payer: Pubkey,
+    pool_address: Pubkey,
+    pool: dict,
+    quote_token_program: Pubkey = TOKEN_PROGRAM,
+) -> Instruction:
+    """Move the creator fee waiting in a pool into its coin creator's vault.
+
+    Permissionless: `payer` only covers rent top-ups. `pool` is the parsed Pool.
+    """
+    quote_mint = pool["quote_mint"]
+    vault_authority = derive_amm_creator_vault(pool["coin_creator"])
+    return Instruction(
+        PUMP_AMM_PROGRAM,
+        SWEEP_CREATOR_FEE_DISCRIMINATOR,
+        [
+            _meta(payer, writable=True, signer=True),
+            _meta(PUMP_SWAP_GLOBAL_CONFIG),
+            _meta(pool_address, writable=True),
+            _meta(quote_mint),
+            _meta(quote_token_program),
+            _meta(pool["pool_quote_token_account"], writable=True),
+            _meta(vault_authority),
+            _meta(find_ata(vault_authority, quote_mint, quote_token_program), writable=True),
+            _meta(SYSTEM_PROGRAM),
+            _meta(ASSOCIATED_TOKEN_PROGRAM),
+            _meta(PUMP_SWAP_EVENT_AUTHORITY),
+            _meta(PUMP_AMM_PROGRAM),
         ],
     )
 

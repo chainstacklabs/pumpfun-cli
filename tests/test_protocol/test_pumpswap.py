@@ -93,3 +93,9 @@ def test_pool_price_uses_both_decimals():
     assert pool_price(1_000_000, 2_000_000_000, 6, 9) == pytest.approx(2.0)
     assert pool_price(1_000_000_000, 2_000_000, 9, 6) == pytest.approx(2.0)
     assert pool_price(0, 1, 6, 9) == 0.0
+
+
+def test_parse_pool_reads_waiting_creator_fees():
+    assert parse_pool_data(build_pool_data(creator_fees=9))["creator_fees"] == 9
+    # A pool written before the field was appended reads it as zero.
+    assert parse_pool_data(build_pool_data(creator_fees=9)[:279])["creator_fees"] == 0

@@ -37,6 +37,11 @@ from pumpfun_cli.protocol.contracts import (
     TOKEN_DECIMALS,
     WSOL_MINT,
 )
+from pumpfun_cli.protocol.creator_fees import (
+    WaitingCurve,
+    WaitingPool,
+    find_waiting_creator_fees,
+)
 from pumpfun_cli.protocol.curve import (
     calculate_buy_tokens_out,
     calculate_sell_quote_out,
@@ -51,7 +56,9 @@ from pumpfun_cli.protocol.instructions import (
     build_collect_coin_creator_fee_instruction,
     build_collect_creator_fee_v2_instruction,
     build_migrate_v2_instruction,
+    build_pumpswap_sweep_creator_fee_instruction,
     build_sell_v2_instruction,
+    build_sweep_creator_fee_instruction,
 )
 from pumpfun_cli.protocol.pumpswap import get_token_program_id
 from pumpfun_cli.protocol.quote import (
@@ -564,6 +571,13 @@ async def migrate_token(
         await client.close()
 
 
+# One run sweeps at most this many curves and pools, largest fee first, so the
+# transaction stays within the size limit; a second run takes the rest.
+MAX_SWEEPS = 8
+COLLECT_COMPUTE_UNITS = 150_000
+SWEEP_COMPUTE_UNITS = 40_000
+
+
 async def collect_creator_fees(
     rpc_url: str,
     keystore_path: str,
@@ -576,7 +590,8 @@ async def collect_creator_fees(
     """Collect creator fees in one quote asset (SOL by default) from pump.fun and PumpSwap.
 
     Vaults are per creator and per quote asset, so fees earned in USDC are
-    collected with a separate run.
+    collected with a separate run. Fees still waiting on the creator's curves
+    and pools are swept into the vaults first, the largest `MAX_SWEEPS` per run.
     """
     keypair = decrypt_keypair(Path(keystore_path), password)
     creator = keypair.pubkey()
@@ -602,6 +617,22 @@ async def collect_creator_fees(
             find_ata(amm_vault, quote_mint, quote_program)
         )
 
+        sweep_warning = None
+        try:
+            waiting_curves, waiting_pools = await find_waiting_creator_fees(
+                client, creator, quote_mint
+            )
+        except Exception:  # noqa: BLE001 - an RPC that refuses getProgramAccounts
+            waiting_curves, waiting_pools = [], []
+            sweep_warning = (
+                "Could not search for fees waiting on your coins (the RPC refused"
+                " getProgramAccounts); collected what the vaults hold."
+            )
+        waiting = sorted([*waiting_curves, *waiting_pools], key=lambda w: w.amount, reverse=True)
+        sweeps, still_waiting = waiting[:MAX_SWEEPS], len(waiting) - MAX_SWEEPS
+        pump_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingCurve))
+        pumpswap_balance += sum(w.amount for w in sweeps if isinstance(w, WaitingPool))
+
         if pump_balance <= 0 and pumpswap_balance <= 0:
             return {"error": "no_fees", "message": "No creator fees to collect."}
 
@@ -612,6 +643,26 @@ async def collect_creator_fees(
                     creator, creator, quote_mint, quote_program
                 )
             )
+        for w in sweeps:
+            if isinstance(w, WaitingCurve):
+                instructions.append(
+                    build_sweep_creator_fee_instruction(
+                        payer=creator,
+                        mint=w.mint,
+                        creator=creator,
+                        quote_mint=quote_mint,
+                        quote_token_program=quote_program,
+                    )
+                )
+            else:
+                instructions.append(
+                    build_pumpswap_sweep_creator_fee_instruction(
+                        payer=creator,
+                        pool_address=w.address,
+                        pool=w.pool,
+                        quote_token_program=quote_program,
+                    )
+                )
         if pump_balance > 0:
             instructions.append(
                 build_collect_creator_fee_v2_instruction(
@@ -631,7 +682,11 @@ async def collect_creator_fees(
                 [keypair],
                 confirm=confirm,
                 priority_fee=priority_fee if priority_fee is not None else DEFAULT_PRIORITY_FEE,
-                compute_units=compute_units if compute_units is not None else 150_000,
+                compute_units=(
+                    compute_units
+                    if compute_units is not None
+                    else COLLECT_COMPUTE_UNITS + SWEEP_COMPUTE_UNITS * len(sweeps)
+                ),
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, set())
@@ -641,9 +696,13 @@ async def collect_creator_fees(
             confirm,
             quote_mint=str(quote_mint),
             quote_symbol=quote_symbol(quote_mint),
-            # Vault balances read before sending; fees landing in between are swept too.
+            # Vault balances and waiting fees read before sending; fees landing in
+            # between are collected too.
             pump_recovered=pump_balance / 10**quote_decimals,
             pumpswap_recovered=pumpswap_balance / 10**quote_decimals,
+            coins_swept=len(sweeps),
+            **({"coins_still_waiting": still_waiting} if still_waiting > 0 else {}),
+            **({"sweep_warning": sweep_warning} if sweep_warning else {}),
         )
     finally:
         await client.close()

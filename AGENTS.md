@@ -130,6 +130,9 @@ lists; these are the ones this CLI depends on.
   pool, then `pool-v2` **only on a canonical pool** (`coin_creator` set), then the
   buyback recipient and its quote ATA last. The canonical pool is derived from the
   mint and the curve's quote mint.
+- Curve v3 and PumpSwap v2 trades keep the creator fee on the curve
+  (`BondingCurve.creator_fee`) or in the pool (`Pool.creator_fees`) until a
+  `sweep_creator_fee`, so `collect-creator-fee` sweeps before it collects.
 - `migrate_v2` also carries accounts the IDL omits: after its 27, the new pool's
   boost vault authority (`["boost_vault", pool]` on PumpSwap) and that
   authority's quote token account. Without them PumpSwap reverts with 6027.
