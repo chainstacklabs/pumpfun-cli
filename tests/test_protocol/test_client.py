@@ -190,7 +190,7 @@ async def test_failed_confirmation_reports_the_signature():
 
     sig = Signature.default()
     client = RpcClient("https://rpc.test")
-    client.rpc = MagicMock()
+    client.rpc = client.sender = MagicMock()
     client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=sig))
     client.rpc.confirm_transaction = AsyncMock(side_effect=TimeoutError())
     with pytest.raises(RuntimeError, match=str(sig)):
@@ -221,7 +221,7 @@ def _sending_client():
     payer = Keypair()
     ix = transfer(TransferParams(from_pubkey=payer.pubkey(), to_pubkey=payer.pubkey(), lamports=1))
     client = RpcClient("http://secret-key.rpc")
-    client.rpc = MagicMock()
+    client.rpc = client.sender = MagicMock()
     client.rpc.get_latest_blockhash = AsyncMock(
         return_value=SimpleNamespace(value=SimpleNamespace(blockhash=Hash.default()))
     )
@@ -270,3 +270,55 @@ async def test_a_send_that_timed_out_may_still_land():
         await client.send_tx([ix], [payer])
     assert not isinstance(info.value, TransactionNotSentError)
     assert "secret-key" not in str(info.value) and info.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_a_send_gets_one_attempt():
+    """A retry could turn a send that reached the node into a refusal."""
+    from unittest.mock import AsyncMock
+
+    import httpx2
+
+    from pumpfun_cli.protocol.client import TransactionNotSentError
+
+    client, ix, payer = _sending_client()
+    client.sender = RpcClient("http://secret-key.rpc").sender
+    refusal = httpx2.Response(
+        200,
+        json={"jsonrpc": "2.0", "id": 0, "error": {"code": -32602, "message": "refused"}},
+        request=httpx2.Request("POST", "http://secret-key.rpc"),
+    )
+    post = AsyncMock(side_effect=[httpx2.ReadTimeout("http://secret-key.rpc"), refusal])
+    client.sender._provider._post_request_once = post
+    try:
+        with pytest.raises(RuntimeError, match="may still land") as info:
+            await client.send_tx([ix], [payer])
+    finally:
+        await client.sender.close()
+    assert not isinstance(info.value, TransactionNotSentError)
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_failure_stands_when_the_read_back_misses_it():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from solders.rpc.responses import GetSignatureStatusesResp
+    from solders.signature import Signature
+
+    from pumpfun_cli.protocol.client import TransactionFailedError
+
+    failed = GetSignatureStatusesResp.from_json(
+        '{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":1},"value":[{"slot":1,'
+        '"confirmations":null,"err":{"InstructionError":[2,{"Custom":6001}]},'
+        '"status":{"Err":{"InstructionError":[2,{"Custom":6001}]}},'
+        '"confirmationStatus":"confirmed"}]}}'
+    )
+    client = RpcClient("https://rpc.test")
+    client.rpc = client.sender = MagicMock()
+    client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=Signature.default()))
+    client.rpc.confirm_transaction = AsyncMock(return_value=failed)
+    client.get_transaction = AsyncMock(return_value=None)
+    with pytest.raises(TransactionFailedError) as info:
+        await client._send_and_confirm(MagicMock(), confirm=True)
+    assert (info.value.instruction_index, info.value.error_code) == (2, 6001)

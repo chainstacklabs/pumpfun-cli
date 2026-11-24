@@ -107,6 +107,9 @@ class RpcClient:
         self.rpc_url = rpc_url
         self.timeout = timeout
         self.rpc = AsyncClient(rpc_url, timeout=timeout)
+        # Sends get one attempt: after a retry, a refusal could answer the second
+        # attempt while the first already reached the node.
+        self.sender = AsyncClient(rpc_url, timeout=timeout, max_transport_retries=0)
 
     async def get_blockhash(self) -> Hash:
         resp = await self.rpc.get_latest_blockhash()
@@ -218,7 +221,7 @@ class RpcClient:
         # carry the RPC URL, aren't chained onto them.
         refused = unknown = None
         try:
-            resp = await self.rpc.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
+            resp = await self.sender.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
         except RPCException as exc:  # a JSON-RPC error: the node turned it down
             refused = str(exc)
         except Exception as exc:  # noqa: BLE001 - e.g. a timeout after the node took it
@@ -233,7 +236,7 @@ class RpcClient:
         signature = str(resp.value)
         if confirm:
             try:
-                await self.rpc.confirm_transaction(
+                confirmed = await self.rpc.confirm_transaction(
                     resp.value, commitment="confirmed", sleep_seconds=1
                 )
                 status = await self.get_transaction(signature)
@@ -244,6 +247,10 @@ class RpcClient:
                 ) from None
             if status and status["err"]:
                 raise TransactionFailedError(status["err"])
+            # A lagging node can miss the transaction; the confirmed status still has its error.
+            landed = confirmed.value[0]
+            if landed is not None and landed.err is not None:
+                raise TransactionFailedError(landed.err)
         return signature
 
     async def send_tx(
@@ -325,3 +332,4 @@ class RpcClient:
 
     async def close(self):
         await self.rpc.close()
+        await self.sender.close()
