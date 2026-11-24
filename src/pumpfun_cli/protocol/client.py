@@ -239,15 +239,12 @@ class RpcClient:
                 confirmed = await self.rpc.confirm_transaction(
                     resp.value, commitment="confirmed", sleep_seconds=1
                 )
-                status = await self.get_transaction(signature)
             except Exception as exc:  # noqa: BLE001 - the send already happened
                 raise RuntimeError(
                     f"Sent {signature} but could not confirm it ({type(exc).__name__}). "
                     f"Check it with: pumpfun tx-status {signature}"
                 ) from None
-            if status and status["err"]:
-                raise TransactionFailedError(status["err"])
-            # A lagging node can miss the transaction; the confirmed status still has its error.
+            # The confirmed status carries the on-chain result.
             landed = confirmed.value[0]
             if landed is not None and landed.err is not None:
                 raise TransactionFailedError(landed.err)

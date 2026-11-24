@@ -183,14 +183,13 @@ async def test_get_transaction_http_error_hides_the_url(respx_mock):
 
 
 @pytest.mark.asyncio
-async def test_failed_confirmation_reports_the_signature():
+async def test_failed_confirmation_reports_the_signature(mocked):
     from unittest.mock import AsyncMock, MagicMock
 
     from solders.signature import Signature
 
     sig = Signature.default()
-    client = RpcClient("https://rpc.test")
-    client.rpc = client.sender = MagicMock()
+    client = mocked
     client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=sig))
     client.rpc.confirm_transaction = AsyncMock(side_effect=TimeoutError())
     with pytest.raises(RuntimeError, match=str(sig)):
@@ -210,31 +209,51 @@ async def test_get_transaction_non_json_is_a_runtime_error(respx_mock):
         await client.close()
 
 
-def _sending_client():
+def _blockhash_rpc():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock
 
     from solders.hash import Hash
+
+    rpc = MagicMock()
+    rpc.get_latest_blockhash = AsyncMock(
+        return_value=SimpleNamespace(value=SimpleNamespace(blockhash=Hash.default()))
+    )
+    return rpc
+
+
+def _transfer():
     from solders.keypair import Keypair
     from solders.system_program import TransferParams, transfer
 
     payer = Keypair()
     ix = transfer(TransferParams(from_pubkey=payer.pubkey(), to_pubkey=payer.pubkey(), lamports=1))
+    return ix, payer
+
+
+@pytest.fixture
+async def mocked():
+    """An RpcClient whose RPC calls are one mock; its real HTTP clients are closed afterwards."""
     client = RpcClient("http://secret-key.rpc")
-    client.rpc = client.sender = MagicMock()
-    client.rpc.get_latest_blockhash = AsyncMock(
-        return_value=SimpleNamespace(value=SimpleNamespace(blockhash=Hash.default()))
-    )
-    return client, ix, payer
+    real = client.rpc, client.sender
+    client.rpc = client.sender = _blockhash_rpc()
+    yield client
+    for http in real:
+        await http.close()
+
+
+@pytest.fixture
+def sending(mocked):
+    return (mocked, *_transfer())
 
 
 @pytest.mark.asyncio
-async def test_no_blockhash_means_nothing_was_sent():
+async def test_no_blockhash_means_nothing_was_sent(sending):
     from unittest.mock import AsyncMock
 
     from pumpfun_cli.protocol.client import TransactionNotSentError
 
-    client, ix, payer = _sending_client()
+    client, ix, payer = sending
     client.rpc.get_latest_blockhash = AsyncMock(side_effect=OSError("http://secret-key.rpc down"))
     with pytest.raises(TransactionNotSentError, match="nothing was sent") as info:
         await client.send_tx([ix], [payer])
@@ -243,28 +262,28 @@ async def test_no_blockhash_means_nothing_was_sent():
 
 
 @pytest.mark.asyncio
-async def test_a_refused_send_is_not_sent_and_says_why():
+async def test_a_refused_send_is_not_sent_and_says_why(sending):
     from unittest.mock import AsyncMock
 
     from solana.rpc.core import RPCException
 
     from pumpfun_cli.protocol.client import TransactionNotSentError
 
-    client, ix, payer = _sending_client()
+    client, ix, payer = sending
     client.rpc.send_transaction = AsyncMock(side_effect=RPCException("Blockhash not found"))
     with pytest.raises(TransactionNotSentError, match="Blockhash not found"):
         await client.send_tx([ix], [payer])
 
 
 @pytest.mark.asyncio
-async def test_a_send_that_timed_out_may_still_land():
+async def test_a_send_that_timed_out_may_still_land(sending):
     from unittest.mock import AsyncMock
 
     import httpx
 
     from pumpfun_cli.protocol.client import TransactionNotSentError
 
-    client, ix, payer = _sending_client()
+    client, ix, payer = sending
     client.rpc.send_transaction = AsyncMock(side_effect=httpx.ReadTimeout("http://secret-key.rpc"))
     with pytest.raises(RuntimeError, match="may still land") as info:
         await client.send_tx([ix], [payer])
@@ -281,8 +300,9 @@ async def test_a_send_gets_one_attempt():
 
     from pumpfun_cli.protocol.client import TransactionNotSentError
 
-    client, ix, payer = _sending_client()
-    client.sender = RpcClient("http://secret-key.rpc").sender
+    client = RpcClient("http://secret-key.rpc")
+    real_rpc, client.rpc = client.rpc, _blockhash_rpc()
+    ix, payer = _transfer()
     refusal = httpx2.Response(
         200,
         json={"jsonrpc": "2.0", "id": 0, "error": {"code": -32602, "message": "refused"}},
@@ -294,13 +314,15 @@ async def test_a_send_gets_one_attempt():
         with pytest.raises(RuntimeError, match="may still land") as info:
             await client.send_tx([ix], [payer])
     finally:
+        await real_rpc.close()
         await client.sender.close()
     assert not isinstance(info.value, TransactionNotSentError)
     assert post.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_failure_stands_when_the_read_back_misses_it():
+async def test_a_confirmed_failure_needs_no_read_back(mocked):
+    """The confirmed status has the error; a failing read-back must not hide it."""
     from unittest.mock import AsyncMock, MagicMock
 
     from solders.rpc.responses import GetSignatureStatusesResp
@@ -314,11 +336,10 @@ async def test_a_confirmed_failure_stands_when_the_read_back_misses_it():
         '"status":{"Err":{"InstructionError":[2,{"Custom":6001}]}},'
         '"confirmationStatus":"confirmed"}]}}'
     )
-    client = RpcClient("https://rpc.test")
-    client.rpc = client.sender = MagicMock()
+    client = mocked
     client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=Signature.default()))
     client.rpc.confirm_transaction = AsyncMock(return_value=failed)
-    client.get_transaction = AsyncMock(return_value=None)
+    client.get_transaction = AsyncMock(side_effect=TimeoutError())
     with pytest.raises(TransactionFailedError) as info:
         await client._send_and_confirm(MagicMock(), confirm=True)
     assert (info.value.instruction_index, info.value.error_code) == (2, 6001)
