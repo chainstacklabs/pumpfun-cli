@@ -52,7 +52,7 @@ uv tool uninstall pumpfun-cli                                                  #
 ### 3. Set your RPC endpoint and wallet
 
 ```bash
-pumpfun config set rpc https://your-node.chainstack.com/abc123
+pumpfun config set rpc https://solana-mainnet.core.chainstack.com/YOUR_AUTH_TOKEN
 pumpfun wallet create            # or: pumpfun wallet import <keypair.json>
 ```
 
@@ -218,7 +218,7 @@ Every node provider has its own limits — method availability, requests per sec
 
 LaunchLab coins priced in anything but SOL are found with `getProgramAccounts`, filtered by the coin's mint; providers that don't serve that method can't trade them.
 
-For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chainstack.com/docs/solana-trader-nodes) for transaction propagation.
+For faster execution, a Chainstack Global Node with the [Warp transactions](https://docs.chainstack.com/docs/warp-transactions) add-on sends transactions through bloXroute's staked relay.
 
 ## Security
 
