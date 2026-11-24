@@ -43,25 +43,6 @@ commands/  →  core/  →  protocol/
 
 Entry point: `src/pumpfun_cli/cli.py` → `pyproject.toml` `[project.scripts] pumpfun = "pumpfun_cli.cli:app"`
 
-## Project Structure
-
-```
-src/pumpfun_cli/
-├── cli.py              # Root Typer app, GlobalState, callback, command registration
-├── group.py            # JsonAwareGroup — allows --json at any argv position
-├── crypto.py           # AES-256-GCM wallet encryption (scrypt KDF)
-├── output.py           # render() + error() — TTY-aware output
-├── commands/           # Thin CLI layer (config, info, launch, tokens, trade, tx_status, wallet)
-├── core/               # Business logic (config, cpmm, info, launch, launchlab, pumpswap, tokens, trade, tx_status, validate, wallet)
-└── protocol/           # Solana primitives (address, client, contracts, cpmm, curve, idl_parser, instructions, launchlab, pumpswap, quote, token_account)
-
-tests/
-├── test_commands/      # CLI smoke tests
-├── test_core/          # Mocked business logic tests
-├── test_protocol/      # Unit tests for protocol math/parsing
-└── test_surfpool/      # Integration tests (ignored by default)
-```
-
 ## Code Conventions
 
 **Output:** Use `render(data, json_mode)` for all output — returns `True` if it emitted JSON (non-TTY or `--json`), `False` in TTY mode. Commands use `if not render(...):` to branch into human-readable output. Use `error(msg, hint, exit_code)` for failures — prints to stderr and raises `SystemExit`. Never use `print()`.
