@@ -424,3 +424,56 @@ def test_sol_text_is_exact():
     assert sol_text(3_002_280) == "0.003002280"
     assert sol_text(12_000_000_001) == "12.000000001"
     assert sol_text(0) == "0.000000000"
+
+
+_SOLD = {
+    "action": "sell",
+    "quote_symbol": "SOL",
+    "quote_received": 0.5,
+    "tokens_sold": 10.0,
+    "explorer": "x",
+}
+
+
+@pytest.mark.parametrize("flags,waits", [([], True), (["--confirm"], True), (["--fast"], False)])
+def test_sends_wait_for_the_outcome_unless_fast(wallet, flags, waits):
+    with (
+        _human("trade"),
+        patch("pumpfun_cli.commands.trade.sell_token", new_callable=AsyncMock) as sell,
+    ):
+        sell.return_value = {**_SOLD, "confirmed": waits}
+        out = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all", *flags])
+    assert out.exit_code == 0
+    assert sell.call_args.kwargs["confirm"] is waits
+    if waits:
+        assert out.output.startswith("Sold 10.00 tokens for 0.500000 SOL")
+    else:
+        assert out.output.startswith("Sent, not confirmed (--fast). Expected: Sold 10.00 tokens")
+
+
+def test_fast_and_confirm_contradict(wallet):
+    out = runner.invoke(app, ["--rpc", "http://rpc", "sell", MINT, "all", "--fast", "--confirm"])
+    assert out.exit_code == 2
+
+
+def test_a_transfer_that_never_landed_is_a_clean_error(wallet):
+    from pumpfun_cli.protocol.client import TransactionExpiredError
+
+    with patch(
+        "pumpfun_cli.commands.wallet.transfer_sol",
+        new_callable=AsyncMock,
+        side_effect=TransactionExpiredError("sig"),
+    ):
+        out = runner.invoke(app, ["--rpc", "http://rpc", "wallet", "transfer", MINT, "0.1"])
+    assert out.exit_code == 1
+    assert "safe to send again" in out.output
+    assert "Traceback" not in out.output
+
+
+def test_drain_always_waits_and_has_no_fast(wallet):
+    with patch("pumpfun_cli.commands.wallet.drain_wallet", new_callable=AsyncMock) as drain:
+        drain.return_value = {"error": "x", "message": "stop"}
+        runner.invoke(app, ["--rpc", "http://rpc", "wallet", "drain", MINT])
+        fast = runner.invoke(app, ["--rpc", "http://rpc", "wallet", "drain", MINT, "--fast"])
+    assert drain.call_args.kwargs["confirm"] is True
+    assert fast.exit_code == 2

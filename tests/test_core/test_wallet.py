@@ -225,6 +225,8 @@ async def test_transfer_all_sol_sends_balance_minus_fees(tmp_path):
     assert result["action"] == "transfer"
     assert result["sol_amount"] == expected_lamports / 1_000_000_000
     assert result["signature"] == "fakesig123"
+    # Confirmed, so a drain sends the rent of closes that just landed.
+    assert mock_client.get_balance.call_args.kwargs.get("commitment") == "confirmed"
     # Verify the system transfer instruction used the right lamports
     call_args = mock_client.send_tx.call_args
     assert call_args is not None

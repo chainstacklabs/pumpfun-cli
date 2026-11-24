@@ -11,6 +11,7 @@ from solders.pubkey import Pubkey
 from pumpfun_cli.core.amounts import (
     amount_fields,
     close_if_emptied,
+    confirmed_quote_received,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -234,8 +235,7 @@ async def buy_pumpswap(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except PoolNotFoundError as exc:
         # Same error as before, marked so a caller can tell "no pool" apart.
@@ -360,6 +360,18 @@ async def sell_pumpswap(
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, PUMPSWAP_SLIPPAGE_ERROR_CODES)
+        received = (
+            await confirmed_quote_received(
+                client,
+                sig,
+                user,
+                quote_mint,
+                sol_quote=is_sol(quote_mint),
+                rent_returned=closed.get("rent_recovered_sol_raw", 0),
+            )
+            if confirm
+            else None
+        )
         result = {
             "action": "sell",
             "venue": "pumpswap",
@@ -367,13 +379,12 @@ async def sell_pumpswap(
             "quote_mint": str(quote_mint),
             "quote_symbol": symbol,
             **amount_fields("tokens_sold", token_amount, base_decimals),
-            "quote_received": expected_quote / 10**quote_decimals,
+            **received_fields("quote_received", received, expected_quote, quote_decimals),
             **closed,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except PoolNotFoundError as exc:
         # Same error as before, marked so a caller can tell "no pool" apart.

@@ -14,6 +14,7 @@ from spl.token.instructions import create_idempotent_associated_token_account
 from pumpfun_cli.core.amounts import (
     amount_fields,
     close_if_emptied,
+    confirmed_quote_received,
     confirmed_token_delta,
     received_fields,
     to_raw,
@@ -291,8 +292,7 @@ async def buy_launchlab(
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except (RuntimeError, ValueError) as exc:
         return {"error": "launchlab_error", "message": str(exc)}
@@ -421,18 +421,29 @@ async def sell_launchlab(
             )
         except TransactionFailedError as exc:
             return _handle_tx_error(exc, LAUNCHLAB_SLIPPAGE_ERROR_CODES)
+        received = (
+            await confirmed_quote_received(
+                client,
+                sig,
+                user,
+                quote_mint,
+                sol_quote=is_sol(quote_mint),
+                rent_returned=closed.get("rent_recovered_sol_raw", 0),
+            )
+            if confirm
+            else None
+        )
         result = {
             "action": "sell",
             "mint": mint_str,
             **_market_fields(market),
             **amount_fields("tokens_sold", token_amount, base_decimals),
-            "quote_received": quote_out / 10**quote_decimals,
+            **received_fields("quote_received", received, quote_out, quote_decimals),
             **closed,
             "signature": sig,
             "explorer": f"https://solscan.io/tx/{sig}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     except (RuntimeError, ValueError) as exc:
         return {"error": "launchlab_error", "message": str(exc)}

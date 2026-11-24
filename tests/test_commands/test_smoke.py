@@ -57,7 +57,7 @@ def test_info_invalid_mint_shows_error():
 def test_collect_creator_fee_help():
     result = runner.invoke(app, ["collect-creator-fee", "--help"])
     assert result.exit_code == 0
-    assert "--confirm" in _strip_ansi(result.output)
+    assert "--fast" in _strip_ansi(result.output)
 
 
 def test_wallet_transfer_help_shows_mint():
@@ -65,13 +65,13 @@ def test_wallet_transfer_help_shows_mint():
     assert result.exit_code == 0
     out = _strip_ansi(result.output)
     assert "--mint" in out
-    assert "--confirm" in out
+    assert "--fast" in out
 
 
-def test_buy_help_shows_confirm():
+def test_buy_help_shows_fast():
     result = runner.invoke(app, ["buy", "--help"])
     assert result.exit_code == 0
-    assert "--confirm" in _strip_ansi(result.output)
+    assert "--fast" in _strip_ansi(result.output)
 
 
 def test_config_roundtrip_json(tmp_path, monkeypatch):

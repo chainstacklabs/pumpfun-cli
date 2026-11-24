@@ -4,6 +4,7 @@ import asyncio
 
 import typer
 
+from pumpfun_cli.commands.sending import confirm_option, fast_option, outcome, wait_for_outcome
 from pumpfun_cli.core.launch import launch_token
 from pumpfun_cli.output import error, render
 
@@ -41,9 +42,11 @@ def launch(
     slippage: int = typer.Option(
         15, "--slippage", help="Slippage tolerance percent for the opening buy (default: 15)"
     ),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Launch a new token on pump.fun (create_v2 + extend_account)."""
+    confirm = wait_for_outcome(fast, confirm)
     state = ctx.obj
     if not name.strip():
         error("Token name cannot be empty.", exit_code=2)
@@ -99,7 +102,7 @@ def launch(
     if result.get("error"):
         error(result["message"])
     if not render(result, state.json_mode):
-        typer.echo("Token launched!")
+        typer.echo(outcome(result, "Token launched."))
         typer.echo(f"  Name:     {result['name']}")
         typer.echo(f"  Ticker:   {result['ticker']}")
         typer.echo(f"  Mint:     {result['mint']}")

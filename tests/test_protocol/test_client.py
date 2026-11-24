@@ -1,6 +1,8 @@
+from unittest.mock import MagicMock
+
 import pytest
 
-from pumpfun_cli.protocol.client import RpcClient
+from pumpfun_cli.protocol.client import RpcClient, TransactionExpiredError, TransactionFailedError
 
 
 def test_client_creation():
@@ -129,7 +131,12 @@ async def test_get_transaction_reads_v1_result(respx_mock):
                     "blockTime": 99,
                     "version": 1,
                     "transaction": ["AAAA", "base64"],
-                    "meta": {"err": None, "fee": 5000},
+                    "meta": {
+                        "err": None,
+                        "fee": 5000,
+                        "preBalances": [100, 1],
+                        "postBalances": [95, 1],
+                    },
                 },
             },
         )
@@ -146,6 +153,8 @@ async def test_get_transaction_reads_v1_result(respx_mock):
         "block_time": 99,
         "pre_token_balances": None,
         "post_token_balances": None,
+        "pre_balances": [100, 1],
+        "post_balances": [95, 1],
     }
     body = respx_mock.calls.last.request.content
     assert b'"maxSupportedTransactionVersion":1' in body.replace(b" ", b"")
@@ -182,18 +191,123 @@ async def test_get_transaction_http_error_hides_the_url(respx_mock):
     assert info.value.__cause__ is None and info.value.__context__ is None
 
 
-@pytest.mark.asyncio
-async def test_failed_confirmation_reports_the_signature(mocked):
-    from unittest.mock import AsyncMock, MagicMock
+def _waiting(client, statuses, heights=(), history=None):
+    """Make `client`'s polls pop the next status; returns the signature it sends.
+
+    `statuses` entries: None (not seen), "processed", "confirmed", ("confirmed", err)
+    or an Exception to raise.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
     from solders.signature import Signature
+    from solders.transaction_status import TransactionConfirmationStatus as S
 
+    levels = {"processed": S.Processed, "confirmed": S.Confirmed}
     sig = Signature.default()
-    client = mocked
-    client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=sig))
-    client.rpc.confirm_transaction = AsyncMock(side_effect=TimeoutError())
-    with pytest.raises(RuntimeError, match=str(sig)):
-        await client._send_and_confirm(MagicMock(), confirm=True)
+    queue, heights = list(statuses), list(heights)
+
+    def status(entry):
+        if entry is None:
+            return None
+        level, err = entry if isinstance(entry, tuple) else (entry, None)
+        return SimpleNamespace(confirmation_status=levels[level], err=err)
+
+    async def statuses_call(sigs, search_transaction_history=False):
+        if search_transaction_history:
+            return SimpleNamespace(value=[status(history)])
+        entry = queue.pop(0) if len(queue) > 1 else queue[0]
+        if isinstance(entry, Exception):
+            raise entry
+        return SimpleNamespace(value=[status(entry)])
+
+    async def height_call(commitment=None):
+        return SimpleNamespace(value=heights.pop(0) if len(heights) > 1 else heights[0])
+
+    client.sender.send_transaction = AsyncMock(return_value=MagicMock(value=sig))
+    client.rpc.get_signature_statuses = statuses_call
+    client.rpc.get_block_height = height_call
+    return sig
+
+
+def _tx(sig):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(signatures=[sig])
+
+
+@pytest.fixture
+def waiting(mocked):
+    """(client, waiting(statuses, ...) -> signature) on a client closed afterwards."""
+    return mocked, lambda *args, **kwargs: _waiting(mocked, *args, **kwargs)
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    import pumpfun_cli.protocol.client as client_module
+
+    monkeypatch.setattr(client_module, "CONFIRM_POLL_SECONDS", 0)
+
+
+@pytest.mark.asyncio
+async def test_confirm_waits_until_the_transaction_lands(no_wait, waiting):
+    client, wait = waiting
+    sig = wait([None, "processed", "confirmed"], heights=[10])
+    assert await client._send_and_confirm(_tx(sig), True, 100) == str(sig)
+
+
+@pytest.mark.asyncio
+async def test_a_landed_failure_raises_with_its_error_code(no_wait, waiting):
+    err = {"InstructionError": [2, {"Custom": 6004}]}
+    client, wait = waiting
+    sig = wait([("confirmed", err)])
+    with pytest.raises(TransactionFailedError) as info:
+        await client._send_and_confirm(_tx(sig), True, 100)
+    assert info.value.error_code == 6004
+
+
+@pytest.mark.asyncio
+async def test_past_its_blockhash_and_unseen_it_never_landed(no_wait, waiting):
+    client, wait = waiting
+    sig = wait([None], heights=[99, 101])
+    with pytest.raises(TransactionExpiredError, match="nothing was spent") as info:
+        await client._send_and_confirm(_tx(sig), True, 100)
+    assert str(sig) in str(info.value)
+
+
+@pytest.mark.asyncio
+async def test_past_its_blockhash_but_in_history_it_landed(no_wait, waiting):
+    """A node that lags can miss a landed transaction; history has the last word."""
+    client, wait = waiting
+    sig = wait([None], heights=[101], history="confirmed")
+    assert await client._send_and_confirm(_tx(sig), True, 100) == str(sig)
+
+
+@pytest.mark.asyncio
+async def test_a_silent_rpc_makes_the_outcome_unknown(no_wait, waiting, monkeypatch):
+    import pumpfun_cli.protocol.client as client_module
+
+    monkeypatch.setattr(client_module, "CONFIRM_RPC_SILENCE_SECONDS", 0)
+    client, wait = waiting
+    sig = wait([TimeoutError(), TimeoutError()])
+    with pytest.raises(RuntimeError, match="whether it landed is unknown") as info:
+        await client._send_and_confirm(_tx(sig), True, 100)
+    assert str(sig) in str(info.value)
+    assert "tx-status" not in str(info.value)
+
+
+@pytest.mark.asyncio
+async def test_one_unanswered_poll_is_not_an_outcome(no_wait, waiting):
+    client, wait = waiting
+    sig = wait([TimeoutError(), "confirmed"])
+    assert await client._send_and_confirm(_tx(sig), True, 100) == str(sig)
+
+
+@pytest.mark.asyncio
+async def test_fast_sends_without_waiting(no_wait, waiting):
+    client, wait = waiting
+    sig = wait([TimeoutError()])
+    assert await client._send_and_confirm(_tx(sig), False, 100) == str(sig)
 
 
 @pytest.mark.asyncio
@@ -211,13 +325,15 @@ async def test_get_transaction_non_json_is_a_runtime_error(respx_mock):
 
 def _blockhash_rpc():
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
 
     from solders.hash import Hash
 
     rpc = MagicMock()
     rpc.get_latest_blockhash = AsyncMock(
-        return_value=SimpleNamespace(value=SimpleNamespace(blockhash=Hash.default()))
+        return_value=SimpleNamespace(
+            value=SimpleNamespace(blockhash=Hash.default(), last_valid_block_height=100)
+        )
     )
     return rpc
 
@@ -321,25 +437,21 @@ async def test_a_send_gets_one_attempt():
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_failure_needs_no_read_back(mocked):
-    """The confirmed status has the error; a failing read-back must not hide it."""
-    from unittest.mock import AsyncMock, MagicMock
+async def test_a_send_with_no_answer_is_waited_on_until_it_lands(no_wait, waiting):
+    import httpx
 
-    from solders.rpc.responses import GetSignatureStatusesResp
-    from solders.signature import Signature
+    client, wait = waiting
+    sig = wait(["confirmed"])
+    client.sender.send_transaction.side_effect = httpx.ReadTimeout("http://secret-key.rpc")
+    assert await client._send_and_confirm(_tx(sig), True, 100) == str(sig)
 
-    from pumpfun_cli.protocol.client import TransactionFailedError
 
-    failed = GetSignatureStatusesResp.from_json(
-        '{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":1},"value":[{"slot":1,'
-        '"confirmations":null,"err":{"InstructionError":[2,{"Custom":6001}]},'
-        '"status":{"Err":{"InstructionError":[2,{"Custom":6001}]}},'
-        '"confirmationStatus":"confirmed"}]}}'
-    )
-    client = mocked
-    client.rpc.send_transaction = AsyncMock(return_value=MagicMock(value=Signature.default()))
-    client.rpc.confirm_transaction = AsyncMock(return_value=failed)
-    client.get_transaction = AsyncMock(side_effect=TimeoutError())
-    with pytest.raises(TransactionFailedError) as info:
-        await client._send_and_confirm(MagicMock(), confirm=True)
-    assert (info.value.instruction_index, info.value.error_code) == (2, 6001)
+@pytest.mark.asyncio
+async def test_a_send_with_no_answer_that_never_lands_expires(no_wait, waiting):
+    import httpx
+
+    client, wait = waiting
+    sig = wait([None], heights=[101])
+    client.sender.send_transaction.side_effect = httpx.ReadTimeout("http://secret-key.rpc")
+    with pytest.raises(TransactionExpiredError, match="safe to send again"):
+        await client._send_and_confirm(_tx(sig), True, 100)

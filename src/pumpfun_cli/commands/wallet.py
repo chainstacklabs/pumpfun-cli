@@ -8,6 +8,7 @@ from pathlib import Path
 
 import typer
 
+from pumpfun_cli.commands.sending import confirm_option, fast_option, outcome, wait_for_outcome
 from pumpfun_cli.core.config import get_config_dir, resolve_value
 from pumpfun_cli.core.wallet import (
     close_empty_atas,
@@ -213,9 +214,11 @@ def wallet_transfer(
     recipient: str = typer.Argument(..., help="Recipient public key"),
     amount: str = typer.Argument(..., help="Amount to send (or 'all' to send max)"),
     mint: str = typer.Option(None, "--mint", help="Token mint address (omit for SOL transfer)"),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Transfer SOL or tokens to another wallet."""
+    confirm = wait_for_outcome(fast, confirm)
     if amount.lower() != "all":
         try:
             value = float(amount)
@@ -270,24 +273,26 @@ def wallet_transfer(
                         rpc, path, password, recipient, float(amount), confirm=confirm, **overrides
                     )
                 )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error(str(exc))
     if result.get("error"):
         error(result["message"])
     if not render(result, ctx.obj and ctx.obj.json_mode):
         if mint:
-            typer.echo(f"Sent {result['amount']} tokens to {result['to']}")
+            typer.echo(outcome(result, f"Sent {result['amount']} tokens to {result['to']}"))
         else:
-            typer.echo(f"Sent {result['sol_amount']} SOL to {result['to']}")
+            typer.echo(outcome(result, f"Sent {result['sol_amount']} SOL to {result['to']}"))
         typer.echo(f"TX: {result['explorer']}")
 
 
 @app.command("close-atas")
 def wallet_close_atas(
     ctx: typer.Context,
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    fast: bool = fast_option(),
+    confirm: bool = confirm_option(),
 ):
     """Close empty token accounts and recover rent SOL."""
+    confirm = wait_for_outcome(fast, confirm)
     path = _get_keystore_path(ctx)
     if not Path(path).exists():
         error("No wallet found.", hint="Run: pumpfun wallet create")
@@ -309,8 +314,11 @@ def wallet_close_atas(
             typer.echo("No empty token accounts to close.")
         else:
             typer.echo(
-                f"Closed {result['closed']} empty account(s),"
-                f" recovered {sol_text(result['recovered_sol_raw'])} SOL"
+                outcome(
+                    result,
+                    f"Closed {result['closed']} empty account(s),"
+                    f" recovered {sol_text(result['recovered_sol_raw'])} SOL",
+                )
             )
             for sig in result["signatures"]:
                 typer.echo(f"TX: https://solscan.io/tx/{sig}")
@@ -331,9 +339,12 @@ def _echo_skipped(skipped: list[dict]) -> None:
 def wallet_drain(
     ctx: typer.Context,
     recipient: str = typer.Argument(..., help="Recipient address for remaining SOL"),
-    confirm: bool = typer.Option(False, "--confirm", help="Wait for transaction confirmation"),
+    confirm: bool = confirm_option(),
 ):
     """Close empty ATAs, then transfer all remaining SOL to recipient."""
+    # Always waits: the closes have to land before the SOL moves, and the
+    # transfer's outcome is the point of the command.
+    confirm = True
     state = ctx.obj
     rpc = _require_rpc(ctx)
     path = _get_keystore_path(ctx)
@@ -354,6 +365,8 @@ def wallet_drain(
         )
     except ValueError:
         error("Wrong wallet password.")
+    except RuntimeError as exc:
+        error(str(exc))
 
     if result.get("error"):
         error(result["message"])

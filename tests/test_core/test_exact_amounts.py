@@ -136,3 +136,107 @@ def test_token_delta_refuses_to_guess():
     }
     assert token_delta(unrecorded, owner, COIN) is None
     assert token_delta(ownerless, owner, COIN) is None
+
+
+# --- a confirmed sell reads what it was paid from the landed transaction ---
+
+
+def _lamports(paid_out: int, fee: int, rent: int) -> dict:
+    """A landed SOL sell: the payer gained the payout and any rent, less the fee."""
+    return {
+        "err": None,
+        "fee": fee,
+        "pre_balances": [1_000_000_000, 7],
+        "post_balances": [1_000_000_000 + paid_out + rent - fee, 7],
+        "pre_token_balances": [],
+        "post_token_balances": [],
+    }
+
+
+async def test_a_confirmed_sell_reports_the_quote_it_was_paid(tmp_keystore):
+    from tests.test_core.helpers import TOKEN_ACCOUNT_LAMPORTS, hold
+
+    client = chain_with_coin()
+    hold(client, _user(tmp_keystore), COIN, 5_000_000)  # selling all closes the account
+    client.transaction = _lamports(123_456_789, fee=35_000, rent=TOKEN_ACCOUNT_LAMPORTS)
+    with patch("pumpfun_cli.core.trade.RpcClient", return_value=client):
+        sold = await sell_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", confirm=True
+        )
+    assert sold["token_account_closed"] is True
+    assert sold["quote_received_raw"] == 123_456_789
+    assert sold["quote_received"] == 123_456_789 / 10**9
+
+
+async def test_a_confirmed_partial_sell_has_no_rent_to_subtract(tmp_keystore):
+    from tests.test_core.helpers import hold
+
+    client = chain_with_coin()
+    hold(client, _user(tmp_keystore), COIN, 5_000_000)
+    client.transaction = _lamports(1_000, fee=5_000, rent=0)
+    with patch("pumpfun_cli.core.trade.RpcClient", return_value=client):
+        sold = await sell_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, "1", confirm=True
+        )
+    assert "token_account_closed" not in sold
+    assert sold["quote_received_raw"] == 1_000
+
+
+async def test_a_confirmed_pumpswap_sell_reports_the_quote_it_was_paid(tmp_keystore):
+    from tests.test_core.helpers import TOKEN_ACCOUNT_LAMPORTS, hold
+
+    client = chain_with_coin(curve=build_curve_data(complete=True, virtual_quote=0))
+    add_pool(client)
+    hold(client, _user(tmp_keystore), COIN, LOSSY_RAW)
+    client.transaction = _lamports(987_654, fee=10_000, rent=TOKEN_ACCOUNT_LAMPORTS)
+    with patch("pumpfun_cli.core.pumpswap.RpcClient", return_value=client):
+        sold = await sell_pumpswap(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", confirm=True
+        )
+    assert sold["quote_received_raw"] == 987_654
+
+
+async def test_a_confirmed_sell_in_another_quote_reads_its_token_balance(tmp_keystore):
+    from tests.test_core.helpers import T22_QUOTE, hold
+
+    user = _user(tmp_keystore)
+    client = chain_with_coin(
+        curve=build_curve_data(quote_mint=T22_QUOTE), quote_mint=T22_QUOTE, quote_decimals=6
+    )
+    hold(client, user, COIN, 1_000_000)
+
+    def rows(amount: int) -> list[dict]:
+        return [
+            {"mint": str(T22_QUOTE), "owner": str(user), "uiTokenAmount": {"amount": str(amount)}}
+        ]
+
+    client.transaction = {
+        "err": None,
+        "fee": 5_000,
+        "pre_balances": [1, 1],
+        "post_balances": [1, 1],
+        "pre_token_balances": rows(10),
+        "post_token_balances": rows(10 + 4_321),
+    }
+    with patch("pumpfun_cli.core.trade.RpcClient", return_value=client):
+        sold = await sell_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", confirm=True
+        )
+    assert sold["quote_received_raw"] == 4_321
+    assert sold["quote_received"] == 4_321 / 10**6
+
+
+async def test_an_unreadable_sell_falls_back_to_the_estimate(tmp_keystore):
+    from tests.test_core.helpers import hold
+
+    client = chain_with_coin()
+    hold(client, _user(tmp_keystore), COIN, 5_000_000)
+    client.transaction = None  # not found on any read
+    with (
+        patch("pumpfun_cli.core.trade.RpcClient", return_value=client),
+        patch("pumpfun_cli.core.amounts.asyncio.sleep"),
+    ):
+        sold = await sell_token(
+            "http://rpc", tmp_keystore, "testpass", MINT_STR, "all", confirm=True
+        )
+    assert "quote_received" in sold and "quote_received_raw" not in sold

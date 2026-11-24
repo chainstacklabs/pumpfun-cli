@@ -254,8 +254,7 @@ async def launch_token(
             "explorer": f"https://solscan.io/tx/{sig}",
             "pump_url": f"https://pump.fun/coin/{mint}",
         }
-        if confirm:
-            result["confirmed"] = True
+        result["confirmed"] = confirm
         return result
     finally:
         await client.close()
