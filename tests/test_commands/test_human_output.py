@@ -149,25 +149,6 @@ def test_collect_and_claim_forward_quote_mint(wallet):
     assert k.exit_code == 0 and claim.call_args.args[3] == MINT
 
 
-def test_collect_tells_how_many_coins_still_hold_fees(wallet):
-    with (
-        _human("trade"),
-        patch(
-            "pumpfun_cli.commands.trade.collect_creator_fees_core", new_callable=AsyncMock
-        ) as col,
-    ):
-        col.return_value = {
-            "quote_symbol": "SOL",
-            "pump_recovered": 1.0,
-            "pumpswap_recovered": 0.0,
-            "coins_swept": 8,
-            "coins_still_waiting": 3,
-            "explorer": "x",
-        }
-        c = runner.invoke(app, ["--rpc", "http://rpc", "collect-creator-fee"])
-    assert c.exit_code == 0 and "3 more coins hold fees" in c.output
-
-
 def test_info(wallet):
     with (
         _human("info"),
@@ -413,7 +394,8 @@ def test_close_atas_reports_exact_rent_and_what_it_left(wallet):
             "closed": 2,
             "recovered_sol": 0.00355312,
             "recovered_sol_raw": 3_553_120,
-            "signature": "s",
+            "signature": "s1",
+            "signatures": ["s1", "s2"],
             "explorer": "x",
             "skipped": [{"address": "a", "mint": "m", "reason": "frozen"}],
         }
@@ -421,6 +403,7 @@ def test_close_atas_reports_exact_rent_and_what_it_left(wallet):
     assert out.exit_code == 0
     assert "Closed 2 empty account(s), recovered 0.003553120 SOL" in out.output
     assert "Left 1 empty account(s) this wallet can't close" in out.output
+    assert "tx/s1" in out.output and "tx/s2" in out.output
 
 
 def test_close_atas_reports_a_failed_listing_instead_of_nothing_to_close(wallet):

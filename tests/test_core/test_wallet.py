@@ -764,3 +764,38 @@ async def test_transfer_sol_below_one_lamport_sends_nothing(tmp_path):
 
     assert result["error"] == "invalid_amount"
     client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_drain_waits_for_the_closes_before_moving_sol(tmp_path):
+    """The rent has to be back before the balance to send is read, even unconfirmed."""
+    from pumpfun_cli.core.wallet import drain_wallet
+
+    keyfile, pubkey = _make_keyfile(tmp_path)
+    with (
+        patch(
+            "pumpfun_cli.core.wallet.list_token_accounts",
+            new_callable=AsyncMock,
+            return_value={"pubkey": pubkey, "token_accounts": []},
+        ),
+        patch(
+            "pumpfun_cli.core.wallet.close_empty_atas",
+            new_callable=AsyncMock,
+            return_value={
+                "closed": 1,
+                "recovered_sol": 0.002,
+                "signature": "a",
+                "incomplete": "x",
+            },
+        ) as close,
+        patch(
+            "pumpfun_cli.core.wallet.transfer_all_sol",
+            new_callable=AsyncMock,
+            return_value={"action": "transfer", "sol_amount": 0.5, "signature": "s"},
+        ),
+    ):
+        result = await drain_wallet(
+            "http://rpc", keyfile, "testpass", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        )
+    assert close.call_args.kwargs["confirm"] is True
+    assert result["ata_incomplete"] == "x"

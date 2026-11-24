@@ -2,11 +2,13 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 from pumpfun_cli.core.wallet import close_empty_atas
 from pumpfun_cli.crypto import encrypt_keypair
+from pumpfun_cli.protocol.client import TransactionFailedError
 from pumpfun_cli.protocol.contracts import TOKEN_2022_PROGRAM, TOKEN_PROGRAM
 from pumpfun_cli.protocol.token_account import TokenHolding
 from tests.test_core.helpers import assert_closes, assert_harvests, closed_accounts
@@ -96,13 +98,57 @@ async def test_nothing_closable_sends_nothing(tmp_path):
     assert result["skipped"][0]["reason"] == "frozen"
 
 
-async def test_a_run_closes_twenty_with_compute_for_each(tmp_path):
-    result, client, _ = await _run(tmp_path, [(TOKEN_PROGRAM, {"lamports": 1})] * 25)
+async def test_every_account_closes_twenty_per_transaction(tmp_path):
+    result, client, _ = await _run(tmp_path, [(TOKEN_PROGRAM, {"lamports": 1_000})] * 45)
+    batches = [c.args[0] for c in client.send_tx.call_args_list]
+    assert [len(b) for b in batches] == [20, 20, 5]
+    assert sum((closed_accounts(b) for b in batches), []) == [row[0] for row in client.rows]
+    assert [c.kwargs["compute_units"] for c in client.send_tx.call_args_list] == [
+        100_000,
+        100_000,
+        25_000,
+    ]
+    assert result["closed"] == 45
+    assert result["recovered_sol"] == 45_000 / 10**9
+    assert result["recovered_sol_raw"] == 45_000
+    assert result["signatures"] == ["sig", "sig", "sig"]
+    assert "incomplete" not in result
+
+
+async def test_a_failed_later_batch_reports_what_closed(tmp_path):
+    keyfile, user = _wallet(tmp_path)
+    client = _client([(TOKEN_PROGRAM, TokenHolding(lamports=1, closer=user))] * 25)
+    client.send_tx = AsyncMock(side_effect=["sig1", TransactionFailedError({"err": 1})])
+    with patch("pumpfun_cli.protocol.client.RpcClient", return_value=client):
+        result = await close_empty_atas("http://rpc", keyfile, "testpass")
     assert result["closed"] == 20
-    assert len(client.send_tx.call_args.args[0]) == 20
-    assert client.send_tx.call_args.kwargs["compute_units"] == 100_000
+    assert result["signatures"] == ["sig1"]
+    assert result["incomplete"].startswith("5 account(s) not closed")
+
+
+async def test_a_failed_first_batch_raises(tmp_path):
+    keyfile, user = _wallet(tmp_path)
+    client = _client([(TOKEN_PROGRAM, TokenHolding(closer=user))])
+    client.send_tx = AsyncMock(side_effect=TransactionFailedError({"err": 1}))
+    with (
+        patch("pumpfun_cli.protocol.client.RpcClient", return_value=client),
+        pytest.raises(TransactionFailedError),
+    ):
+        await close_empty_atas("http://rpc", keyfile, "testpass")
 
 
 async def test_compute_units_override(tmp_path):
     _, client, _ = await _run(tmp_path, [(TOKEN_PROGRAM, {})], compute_units=55_000)
     assert client.send_tx.call_args.kwargs["compute_units"] == 55_000
+
+
+async def test_an_rpc_refusal_on_a_later_batch_reports_what_closed(tmp_path):
+    from pumpfun_cli.protocol.client import TransactionNotSentError
+
+    keyfile, user = _wallet(tmp_path)
+    client = _client([(TOKEN_PROGRAM, TokenHolding(lamports=1, closer=user))] * 25)
+    client.send_tx = AsyncMock(side_effect=["sig1", TransactionNotSentError("refused")])
+    with patch("pumpfun_cli.protocol.client.RpcClient", return_value=client):
+        result = await close_empty_atas("http://rpc", keyfile, "testpass")
+    assert result["closed"] == 20 and result["signatures"] == ["sig1"]
+    assert result["incomplete"] == "5 account(s) not closed: refused"

@@ -353,10 +353,6 @@ def collect_creator_fee(
         symbol = result["quote_symbol"]
         typer.echo(f"Pump.fun fees: {result['pump_recovered']:.6f} {symbol}")
         typer.echo(f"PumpSwap fees: {result['pumpswap_recovered']:.6f} {symbol}")
-        if result.get("coins_still_waiting"):
-            typer.echo(
-                f"{result['coins_still_waiting']} more coins hold fees; run it again to collect them."
-            )
         if result.get("sweep_warning"):
             typer.echo(f"Warning: {result['sweep_warning']}")
         typer.echo(f"TX: {result['explorer']}")

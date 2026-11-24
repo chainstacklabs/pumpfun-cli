@@ -4,7 +4,7 @@ import re
 
 import httpx
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.core import TokenAccountOpts, TxOptsModel
+from solana.rpc.core import RPCException, TokenAccountOpts, TxOptsModel
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
 from solders.instruction import Instruction
@@ -76,6 +76,10 @@ _ERR_PATTERNS = (
 )
 
 
+class TransactionNotSentError(RuntimeError):
+    """The transaction never reached the network: nothing ran and nothing was spent."""
+
+
 class TransactionFailedError(RuntimeError):
     """Raised when a confirmed transaction fails on-chain."""
 
@@ -103,6 +107,9 @@ class RpcClient:
         self.rpc_url = rpc_url
         self.timeout = timeout
         self.rpc = AsyncClient(rpc_url, timeout=timeout)
+        # Sends get one attempt: after a retry, a refusal could answer the second
+        # attempt while the first already reached the node.
+        self.sender = AsyncClient(rpc_url, timeout=timeout, max_transport_retries=0)
 
     async def get_blockhash(self) -> Hash:
         resp = await self.rpc.get_latest_blockhash()
@@ -210,21 +217,37 @@ class RpcClient:
         return resp.value
 
     async def _send_and_confirm(self, tx: VersionedTransaction, confirm: bool) -> str:
-        resp = await self.rpc.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
+        # Errors are raised outside the handlers so the originals, whose text can
+        # carry the RPC URL, aren't chained onto them.
+        refused = unknown = None
+        try:
+            resp = await self.sender.send_transaction(tx, opts=TxOptsModel(skip_preflight=True))
+        except RPCException as exc:  # a JSON-RPC error: the node turned it down
+            refused = str(exc)
+        except Exception as exc:  # noqa: BLE001 - e.g. a timeout after the node took it
+            unknown = type(exc).__name__
+        if refused is not None:
+            raise TransactionNotSentError(f"The RPC refused the transaction: {refused}")
+        if unknown is not None:
+            raise RuntimeError(
+                f"Sending {tx.signatures[0]} failed ({unknown}); the RPC may have taken it,"
+                " so it may still land."
+            )
         signature = str(resp.value)
         if confirm:
             try:
-                await self.rpc.confirm_transaction(
+                confirmed = await self.rpc.confirm_transaction(
                     resp.value, commitment="confirmed", sleep_seconds=1
                 )
-                status = await self.get_transaction(signature)
             except Exception as exc:  # noqa: BLE001 - the send already happened
                 raise RuntimeError(
                     f"Sent {signature} but could not confirm it ({type(exc).__name__}). "
                     f"Check it with: pumpfun tx-status {signature}"
                 ) from None
-            if status and status["err"]:
-                raise TransactionFailedError(status["err"])
+            # The confirmed status carries the on-chain result.
+            landed = confirmed.value[0]
+            if landed is not None and landed.err is not None:
+                raise TransactionFailedError(landed.err)
         return signature
 
     async def send_tx(
@@ -239,7 +262,15 @@ class RpcClient:
 
         Sent as v0 when it fits, otherwise as v1; see `build_message`.
         """
-        blockhash = await self.get_blockhash()
+        failure = None
+        try:
+            blockhash = await self.get_blockhash()
+        except Exception as exc:  # noqa: BLE001 - its text can carry the RPC URL
+            failure = type(exc).__name__
+        if failure is not None:
+            raise TransactionNotSentError(
+                f"Couldn't get a recent blockhash from the RPC ({failure}); nothing was sent."
+            )
         msg = build_message(
             signers[0].pubkey(), instructions, blockhash, compute_units, priority_fee
         )
@@ -298,3 +329,4 @@ class RpcClient:
 
     async def close(self):
         await self.rpc.close()
+        await self.sender.close()

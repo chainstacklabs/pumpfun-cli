@@ -317,11 +317,13 @@ async def close_empty_atas(
     priority_fee: int | None = None,
     compute_units: int | None = None,
 ) -> dict:
-    """Close the wallet's empty token accounts, up to 20 per run, and recover their rent.
+    """Close all of the wallet's empty token accounts and recover their rent.
 
-    Withheld Token-2022 transfer fees go to the mint first. An account the
-    wallet can't close (frozen, or with another close authority) is left and
-    listed in `skipped`, since one failed close would revert the batch.
+    One transaction per 20 accounts. Withheld Token-2022 transfer fees go to
+    the mint first. An account the wallet can't close (frozen, or with another
+    close authority) is left and listed in `skipped`, since one failed close
+    would revert its batch. If a batch fails after others landed, the result
+    reports what closed and the failure in `incomplete`.
     """
     from pumpfun_cli.protocol.client import RpcClient
     from pumpfun_cli.protocol.contracts import TOKEN_2022_PROGRAM, TOKEN_PROGRAM
@@ -348,35 +350,46 @@ async def close_empty_atas(
         }
         if skipped:
             result["skipped"] = skipped
-        batch = closable[:_CLOSE_BATCH]
-        if not batch:
+        signatures, recovered = [], 0
+        for i in range(0, len(closable), _CLOSE_BATCH):
+            batch = closable[i : i + _CLOSE_BATCH]
+            instructions = []
+            for account, mint, program, holding in batch:
+                instructions += build_close_emptied_account_instructions(
+                    user=pubkey,
+                    mint=mint,
+                    account=account,
+                    token_program=program,
+                    withheld=holding.withheld,
+                )
+            try:
+                sig = await client.send_tx(
+                    instructions,
+                    [keypair],
+                    confirm=confirm,
+                    priority_fee=priority_fee if priority_fee is not None else 200_000,
+                    compute_units=compute_units
+                    if compute_units is not None
+                    else _CLOSE_COMPUTE_UNITS * len(batch),
+                )
+            except RuntimeError as exc:
+                if not signatures:
+                    raise
+                result["incomplete"] = (
+                    f"{len(closable) - result['closed']} account(s) not closed: {exc}"
+                )
+                break
+            signatures.append(sig)
+            recovered += sum(holding.lamports for *_, holding in batch)
+            result["closed"] += len(batch)
+        if not signatures:
             return result
-
-        instructions = []
-        for account, mint, program, holding in batch:
-            instructions += build_close_emptied_account_instructions(
-                user=pubkey,
-                mint=mint,
-                account=account,
-                token_program=program,
-                withheld=holding.withheld,
-            )
-        sig = await client.send_tx(
-            instructions,
-            [keypair],
-            confirm=confirm,
-            priority_fee=priority_fee if priority_fee is not None else 200_000,
-            compute_units=compute_units
-            if compute_units is not None
-            else _CLOSE_COMPUTE_UNITS * len(batch),
-        )
-        recovered = sum(holding.lamports for *_, holding in batch)
         result.update(
             {
-                "closed": len(batch),
                 **amount_fields("recovered_sol", recovered, SOL_DECIMALS),
-                "signature": sig,
-                "explorer": f"https://solscan.io/tx/{sig}",
+                "signature": signatures[0],
+                "signatures": signatures,
+                "explorer": f"https://solscan.io/tx/{signatures[0]}",
             }
         )
         if confirm:
@@ -410,13 +423,14 @@ async def drain_wallet(
     token_result = await list_token_accounts(rpc_url, wallet_pubkey, show_empty=False)
     non_empty_tokens = token_result["token_accounts"]
 
-    # Step 2 — Close empty ATAs
+    # Step 2 — Close empty ATAs. Always confirmed: the rent has to be back in
+    # the wallet before step 3 reads the balance it sends.
     try:
         ata_result = await close_empty_atas(
             rpc_url,
             keystore_path,
             password,
-            confirm=confirm,
+            confirm=True,
             priority_fee=priority_fee,
             compute_units=compute_units,
         )
@@ -450,6 +464,7 @@ async def drain_wallet(
         "ata_signature": ata_result.get("signature"),
         "ata_error": ata_result.get("ata_error"),
         "ata_skipped": ata_result.get("skipped", []),
+        **({"ata_incomplete": ata_result["incomplete"]} if "incomplete" in ata_result else {}),
         "sol_transferred": sol_result.get("sol_amount", 0),
         "sol_transferred_raw": sol_result.get("sol_amount_raw", 0),
         "sol_signature": sol_result.get("signature"),
