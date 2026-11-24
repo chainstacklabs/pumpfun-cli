@@ -1,5 +1,6 @@
 """Human-readable output for the reshaped results, labelled by the coin's quote asset."""
 
+import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -287,7 +288,7 @@ def test_launch_requires_a_metadata_uri(wallet, uri_args):
             ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", *uri_args],
         )
     assert result.exit_code == 2
-    assert "--uri" in result.output
+    assert "--uri" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     launch.assert_not_called()
 
 
