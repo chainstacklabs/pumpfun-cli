@@ -8,6 +8,11 @@ from solders.keypair import Keypair
 from pumpfun_cli.core.amounts import amount_fields, to_raw
 from pumpfun_cli.core.validate import invalid_pubkey_error, parse_pubkey
 from pumpfun_cli.crypto import decrypt_keypair, encrypt_keypair, get_pubkey
+from pumpfun_cli.protocol.client import (
+    TransactionExpiredError,
+    TransactionFailedError,
+    TransactionNotSentError,
+)
 from pumpfun_cli.protocol.contracts import SOL_DECIMALS
 
 
@@ -178,7 +183,8 @@ async def transfer_all_sol(
 
     client = RpcClient(rpc_url)
     try:
-        balance = await client.get_balance(keypair.pubkey())
+        # "confirmed", so rent from closes that just landed (drain) is included.
+        balance = await client.get_balance(keypair.pubkey(), commitment="confirmed")
         total_fees = BASE_TX_FEE + math.ceil(pf * cu / 1_000_000)
         send_lamports = balance - total_fees
         if send_lamports <= 0:
@@ -369,11 +375,24 @@ async def close_empty_atas(
                     if compute_units is not None
                     else _CLOSE_COMPUTE_UNITS * len(batch),
                 )
-            except RuntimeError as exc:
+            except (
+                TransactionFailedError,
+                TransactionNotSentError,
+                TransactionExpiredError,
+            ) as exc:
                 if not signatures:
                     raise
                 result["incomplete"] = (
                     f"{len(closable) - result['closed']} account(s) not closed: {exc}"
+                )
+                break
+            except RuntimeError as exc:
+                if not signatures:
+                    raise
+                result["incomplete"] = (
+                    f"{len(closable) - result['closed']} account(s) not confirmed closed;"
+                    f" a batch's outcome is unknown, so up to {len(batch)} of them may have"
+                    f" closed: {exc}"
                 )
                 break
             signatures.append(sig)

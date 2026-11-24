@@ -152,3 +152,25 @@ async def test_an_rpc_refusal_on_a_later_batch_reports_what_closed(tmp_path):
         result = await close_empty_atas("http://rpc", keyfile, "testpass")
     assert result["closed"] == 20 and result["signatures"] == ["sig1"]
     assert result["incomplete"] == "5 account(s) not closed: refused"
+
+
+async def test_a_later_batch_with_an_unknown_outcome_may_have_closed(tmp_path):
+    keyfile, user = _wallet(tmp_path)
+    client = _client([(TOKEN_PROGRAM, TokenHolding(lamports=1, closer=user))] * 45)
+    client.send_tx = AsyncMock(side_effect=["sig1", RuntimeError("RPC stopped answering")])
+    with patch("pumpfun_cli.protocol.client.RpcClient", return_value=client):
+        result = await close_empty_atas("http://rpc", keyfile, "testpass")
+    assert result["closed"] == 20 and result["signatures"] == ["sig1"]
+    assert result["incomplete"].startswith("25 account(s) not confirmed closed")
+    assert "up to 20 of them may have closed" in result["incomplete"]
+
+
+async def test_an_expired_later_batch_did_not_close(tmp_path):
+    from pumpfun_cli.protocol.client import TransactionExpiredError
+
+    keyfile, user = _wallet(tmp_path)
+    client = _client([(TOKEN_PROGRAM, TokenHolding(lamports=1, closer=user))] * 25)
+    client.send_tx = AsyncMock(side_effect=["sig1", TransactionExpiredError("sig2")])
+    with patch("pumpfun_cli.protocol.client.RpcClient", return_value=client):
+        result = await close_empty_atas("http://rpc", keyfile, "testpass")
+    assert result["incomplete"].startswith("5 account(s) not closed")
