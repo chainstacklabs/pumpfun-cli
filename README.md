@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  • <a target="_blank" href="https://chainstack.com/">Homepage</a> •
-  <a target="_blank" href="https://chainstack.com/protocols/">Supported protocols</a> •
-  <a target="_blank" href="https://chainstack.com/blog/">Chainstack blog</a> •
-  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis">Blockchain API reference</a> • <br> 
-  • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
+  • <a target="_blank" href="https://chainstack.com/?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli">Homepage</a> •
+  <a target="_blank" href="https://chainstack.com/protocols/?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli">Supported protocols</a> •
+  <a target="_blank" href="https://chainstack.com/blog/?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli">Chainstack blog</a> •
+  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli">Blockchain API reference</a> • <br> 
+  • <a target="_blank" href="https://console.chainstack.com/sign-up?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli">Start for free</a> •
 </p>
 
 A stateless command-line tool for trading on **pump.fun** and on **letsbonk.fun**, **StonkFun** and every other launchpad on Raydium LaunchLab. It buys and sells on the bonding curve, follows graduated coins into PumpSwap and Raydium CPMM, and launches pump.fun coins. Built for humans, scripts and AI agents alike: every command can answer in JSON.
@@ -214,11 +214,11 @@ The `tokens` listings use pump.fun's frontend API, which is unofficial and chang
 
 ## Throughput and rate limits
 
-Every node provider has its own limits — method availability, requests per second, plan-specific caps. Consult your provider's docs, and don't expect public RPC nodes to hold up. For Chainstack, see the [throughput guidelines](https://docs.chainstack.com/docs/limits).
+Every node provider has its own limits — method availability, requests per second, plan-specific caps. Consult your provider's docs, and don't expect public RPC nodes to hold up. For Chainstack, see the [throughput guidelines](https://docs.chainstack.com/docs/limits?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli).
 
 LaunchLab coins priced in anything but SOL are found with `getProgramAccounts`, filtered by the coin's mint; providers that don't serve that method can't trade them.
 
-For faster execution, a Chainstack Global Node with the [Warp transactions](https://docs.chainstack.com/docs/warp-transactions) add-on sends transactions through bloXroute's staked relay.
+For faster execution, a Chainstack Global Node with the [Warp transactions](https://docs.chainstack.com/docs/warp-transactions?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-cli) add-on sends transactions through bloXroute's staked relay.
 
 ## Security
 
