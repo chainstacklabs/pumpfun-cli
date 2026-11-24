@@ -170,7 +170,6 @@ async def test_sell_caps_at_the_curves_real_reserves(
         password=test_password,
         name="Short",
         ticker="SHRT",
-        description="short reserves",
         uri="https://example.com/short.json",
         initial_buy=1,
         confirm=True,
@@ -261,7 +260,6 @@ async def test_buy_past_the_curve_is_reported(
         password=test_password,
         name="Big",
         ticker="BIG",
-        description="buy past the curve",
         uri="https://example.com/big.json",
         confirm=True,
     )

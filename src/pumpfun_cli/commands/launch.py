@@ -13,12 +13,10 @@ def launch(
     ctx: typer.Context,
     name: str = typer.Option(..., "--name", help="Token name"),
     ticker: str = typer.Option(..., "--ticker", help="Token ticker/symbol"),
-    desc: str = typer.Option("", "--desc", help="Token description (for the metadata upload)"),
-    image: str | None = typer.Option(None, "--image", help="Path to token image"),
-    uri: str | None = typer.Option(
-        None,
+    uri: str = typer.Option(
+        ...,
         "--uri",
-        help="Metadata JSON URI you already host; skips the pump.fun upload (--desc and --image are then unused)",
+        help="URI of the metadata JSON you host (name, symbol, description, image)",
     ),
     buy: float | None = typer.Option(
         None,
@@ -52,6 +50,8 @@ def launch(
         error("Token name cannot be empty.", exit_code=2)
     if not ticker.strip():
         error("Token ticker cannot be empty.", exit_code=2)
+    if not uri.strip():
+        error("Metadata URI cannot be empty.", hint="Pass --uri <url>", exit_code=2)
     if not state or not state.rpc:
         error("RPC endpoint not configured.", hint="Run: pumpfun config set rpc <url>")
     if slippage < 0 or slippage > 100:
@@ -84,8 +84,7 @@ def launch(
                 password,
                 name,
                 ticker,
-                desc,
-                image,
+                uri,
                 initial_buy=buy,
                 is_mayhem=mayhem,
                 quote_mint_str=quote_mint,
@@ -93,7 +92,6 @@ def launch(
                 is_holder_reward=holder_reward,
                 slippage=slippage,
                 confirm=confirm,
-                uri=uri,
                 **overrides,
             )
         )

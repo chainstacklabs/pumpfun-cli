@@ -86,7 +86,7 @@ Every command that sends a transaction waits for it to land and reports what hap
 pumpfun launch --name "MyToken" --ticker "MTK" --uri https://example.com/mytoken.json --buy 0.1
 ```
 
-pump.fun no longer accepts anonymous metadata uploads, so `launch` takes the URI of a metadata JSON you host (`name`, `symbol`, `description`, `image`). Without `--uri` it still tries the upload and says so when it is refused. `--buy` buys in the same transaction as the create, so nobody buys first.
+pump.fun no longer accepts anonymous metadata uploads, so `launch` requires `--uri`: the URI of a metadata JSON you host (`name`, `symbol`, `description`, `image`), for example on IPFS or any static host. `--buy` buys in the same transaction as the create, so nobody buys first.
 
 ## Commands
 
@@ -106,7 +106,7 @@ Transaction inspection (requires RPC):
   pumpfun tx-status <signature>           Confirmation status, slot, fee, errors
 
 Token launch (requires RPC + wallet):
-  pumpfun launch --name X --ticker Y [--uri U | --desc D --image P] [--buy N]
+  pumpfun launch --name X --ticker Y --uri U [--buy N]
                  [--quote-mint M] [--creator-fee-bps N] [--holder-reward]
                  [--mayhem] [--slippage N] [--fast]
 
@@ -191,7 +191,7 @@ A pump.fun bonding curve pays a sell out of its real reserves, which on some coi
 | `info` | Solana RPC (`getAccountInfo` for bonding curve PDA; LaunchLab: `getMultipleAccounts`, `getProgramAccounts`) | JSON-RPC |
 | `buy` | Solana RPC (`getAccountInfo`, `getLatestBlockhash`, `sendTransaction`; LaunchLab adds `getMultipleAccounts`, `getProgramAccounts`) | JSON-RPC |
 | `sell` | Solana RPC (`getAccountInfo`, `getTokenAccountBalance`, `getLatestBlockhash`, `sendTransaction`; LaunchLab as `buy`) | JSON-RPC |
-| `launch` | Solana RPC (`sendTransaction`); `pump.fun/api/ipfs` only without `--uri` | JSON-RPC (+ HTTPS) |
+| `launch` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `tx-status` | Solana RPC (`getTransaction`) | JSON-RPC |
 | `migrate` | Solana RPC (`sendTransaction`) | JSON-RPC |
 | `claim-cashback` | Solana RPC (`sendTransaction`) | JSON-RPC |

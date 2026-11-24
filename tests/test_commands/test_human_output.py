@@ -200,8 +200,8 @@ def test_launch_forwards_options(wallet):
                 "N",
                 "--ticker",
                 "T",
-                "--desc",
-                "d",
+                "--uri",
+                "u",
                 "--buy",
                 "2",
                 "--quote-mint",
@@ -231,8 +231,8 @@ def test_launch_rejects_negative_fee(wallet):
             "N",
             "--ticker",
             "T",
-            "--desc",
-            "d",
+            "--uri",
+            "u",
             "--creator-fee-bps",
             "-1",
         ],
@@ -251,7 +251,9 @@ def test_buy_rejects_non_positive_amount(wallet, amount):
 def test_launch_rejects_negative_buy(wallet):
     with patch("pumpfun_cli.commands.launch.launch_token", new_callable=AsyncMock) as launch:
         result = runner.invoke(
-            app, ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", "--buy", "-1"]
+            app,
+            ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", "--uri", "u"]
+            + ["--buy", "-1"],
         )
     assert result.exit_code != 0
     launch.assert_not_called()
@@ -277,13 +279,16 @@ def test_launch_rejects_blank_name_or_ticker(wallet, name, ticker, message):
     launch.assert_not_called()
 
 
-def test_launch_with_uri_needs_no_desc(wallet):
+@pytest.mark.parametrize("uri_args", [[], ["--uri", "  "]])
+def test_launch_requires_a_metadata_uri(wallet, uri_args):
     with patch("pumpfun_cli.commands.launch.launch_token", new_callable=AsyncMock) as launch:
-        launch.return_value = {"error": "stop", "message": "stop"}
-        runner.invoke(
-            app, ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", "--uri", "u"]
+        result = runner.invoke(
+            app,
+            ["--rpc", "http://rpc", "launch", "--name", "N", "--ticker", "T", *uri_args],
         )
-    launch.assert_called_once()
+    assert result.exit_code == 2
+    assert "--uri" in result.output
+    launch.assert_not_called()
 
 
 def test_tokens_table_names_quote_and_survives_missing_chain_data():

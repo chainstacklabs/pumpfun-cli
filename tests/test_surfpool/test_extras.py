@@ -114,7 +114,6 @@ async def test_migrate_a_completed_curve(
         password=test_password,
         name="Migrate",
         ticker="MIG",
-        description="migrate test",
         uri="https://example.com/migrate.json",
         confirm=True,
     )
