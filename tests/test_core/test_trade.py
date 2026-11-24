@@ -22,7 +22,11 @@ from pumpfun_cli.protocol.address import (
     find_ata,
     find_user_volume_accumulator,
 )
-from pumpfun_cli.protocol.client import TransactionFailedError
+from pumpfun_cli.protocol.client import (
+    TransactionExpiredError,
+    TransactionFailedError,
+    TransactionNotSentError,
+)
 from pumpfun_cli.protocol.contracts import (
     ASSOCIATED_TOKEN_PROGRAM,
     BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR,
@@ -635,7 +639,16 @@ async def test_a_sweep_that_landed_unconfirmed_is_still_collected(tmp_keystore):
     assert "outcome is unknown" in result["sweep_warning"]
 
 
-async def test_a_failed_sweep_ahead_still_collects_what_landed(tmp_keystore):
+@pytest.mark.parametrize(
+    "never_ran",
+    [
+        TransactionFailedError({"InstructionError": [0, {"Custom": 1}]}),
+        TransactionNotSentError("The RPC refused the transaction"),
+        TransactionExpiredError("sig"),
+    ],
+    ids=["failed", "not_sent", "expired"],
+)
+async def test_a_sweep_ahead_that_never_ran_still_collects_what_landed(tmp_keystore, never_ran):
     user = _user_from(tmp_keystore)
     client = FakeClient()
     client.balances[derive_creator_vault(user)] = 650_240  # only the rent floor
@@ -648,7 +661,7 @@ async def test_a_failed_sweep_ahead_still_collects_what_landed(tmp_keystore):
     async def send(instructions, signers, **kw):
         sends.append(instructions)
         if len(sends) == 1:
-            raise TransactionFailedError({"InstructionError": [0, {"Custom": 1}]})
+            raise never_ran
         return await real_send(instructions, signers, **kw)
 
     client.send_tx = send

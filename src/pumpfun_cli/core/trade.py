@@ -29,6 +29,7 @@ from pumpfun_cli.protocol.address import (
 )
 from pumpfun_cli.protocol.client import (
     RpcClient,
+    TransactionExpiredError,
     TransactionFailedError,
     TransactionNotSentError,
 )
@@ -647,7 +648,7 @@ async def _sweep_ahead(
                 priority_fee=priority_fee if priority_fee is not None else DEFAULT_PRIORITY_FEE,
                 compute_units=SWEEP_COMPUTE_UNITS * len(chunk),
             )
-        except (TransactionFailedError, TransactionNotSentError) as exc:
+        except (TransactionFailedError, TransactionNotSentError, TransactionExpiredError) as exc:
             left = len(waiting) - len(swept)
             return swept, f"{left} coin(s) not swept, their fees still wait on them: {exc}"
         except RuntimeError as exc:
