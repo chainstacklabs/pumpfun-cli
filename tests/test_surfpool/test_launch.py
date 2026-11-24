@@ -4,12 +4,9 @@ Tests launch_token() against a surfpool fork for mayhem and holder-reward
 coins, with and without an opening buy, verifying that tokens are created
 on-chain successfully. A launch with a buy goes out as a v1 transaction.
 
-The IPFS metadata upload is mocked — the on-chain program does not
-validate URI content, so a fake URI is sufficient for testing the
-create_v2 instruction serialisation.
+The on-chain program does not validate URI content, so a fake URI is
+sufficient for testing the create_v2 instruction serialisation.
 """
-
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -17,12 +14,6 @@ from pumpfun_cli.core.info import get_token_info
 from pumpfun_cli.core.launch import launch_token
 
 FAKE_URI = "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-
-_UPLOAD_PATCH = patch(
-    "pumpfun_cli.core.launch.upload_metadata",
-    new_callable=AsyncMock,
-    return_value=FAKE_URI,
-)
 
 _LAUNCH_MATRIX = [
     pytest.param(False, False, None, id="default"),
@@ -36,9 +27,7 @@ _LAUNCH_MATRIX = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_mayhem,is_holder_reward,initial_buy", _LAUNCH_MATRIX)
-@_UPLOAD_PATCH
 async def test_launch(
-    _mock_upload,
     surfpool_rpc,
     funded_keypair,
     test_keystore,
@@ -62,7 +51,7 @@ async def test_launch(
         password=test_password,
         name="Test",
         ticker="TST",
-        description="parametrized launch",
+        uri=FAKE_URI,
         **kwargs,
     )
 

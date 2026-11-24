@@ -1,9 +1,7 @@
-"""Token launch — create_v2 with IPFS metadata upload."""
+"""Token launch — create_v2 with metadata the caller hosts."""
 
-import os
 from pathlib import Path
 
-import httpx
 from solders.keypair import Keypair
 from spl.token.instructions import create_idempotent_associated_token_account
 
@@ -13,7 +11,6 @@ from pumpfun_cli.crypto import decrypt_keypair
 from pumpfun_cli.protocol.address import derive_bonding_curve, find_ata, find_holder_rewards
 from pumpfun_cli.protocol.client import RpcClient, TransactionFailedError
 from pumpfun_cli.protocol.contracts import (
-    HTTP_HEADERS,
     LAUNCH_COMPUTE_UNITS,
     TOKEN_2022_PROGRAM,
     TOKEN_DECIMALS,
@@ -37,34 +34,6 @@ from pumpfun_cli.protocol.quote import (
 )
 
 _BPS = 10_000
-
-
-async def upload_metadata(
-    name: str,
-    symbol: str,
-    description: str,
-    image_path: str | None = None,
-) -> str:
-    """Upload token metadata to pump.fun's IPFS endpoint. Returns metadata URI."""
-    async with httpx.AsyncClient(timeout=30.0, headers=HTTP_HEADERS) as client:
-        files = {}
-        data = {
-            "name": name,
-            "symbol": symbol,
-            "description": description,
-            "showName": "true",
-        }
-        if image_path and os.path.exists(image_path):
-            files["file"] = (os.path.basename(image_path), open(image_path, "rb"), "image/png")
-        resp = await client.post(
-            "https://pump.fun/api/ipfs",
-            data=data,
-            files=files if files else None,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Metadata upload to pump.fun failed (HTTP {resp.status_code})")
-        result = resp.json()
-        return result.get("metadataUri") or result.get("metadata_uri") or result.get("uri", "")
 
 
 def opening_buy_tokens(
@@ -94,8 +63,7 @@ async def launch_token(
     password: str,
     name: str,
     ticker: str,
-    description: str,
-    image_path: str | None = None,
+    uri: str,
     initial_buy: float | None = None,
     is_mayhem: bool = False,
     quote_mint_str: str | None = None,
@@ -105,12 +73,11 @@ async def launch_token(
     confirm: bool = False,
     priority_fee: int | None = None,
     compute_units: int | None = None,
-    uri: str | None = None,
 ) -> dict:
     """Launch a new coin with create_v2, optionally buying it in the same transaction.
 
-    `uri` is a metadata JSON already hosted elsewhere; without it the metadata
-    is uploaded to pump.fun, which may refuse an unauthenticated upload.
+    `uri` points at a metadata JSON the caller hosts; pump.fun accepts no
+    anonymous uploads.
 
     With `initial_buy`, create and buy go out as one transaction (v1, since
     together they exceed v0), so nobody can buy in between.
@@ -132,7 +99,7 @@ async def launch_token(
     client = RpcClient(rpc_url)
     try:
         # Refuse anything the program would reject or silently ignore before
-        # uploading metadata or spending a fee.
+        # spending a fee.
         check_mayhem_quote(quote_mint, is_mayhem)
         global_state = await fetch_global(client)
         if is_holder_reward and not global_state.get("is_holder_reward_enabled", False):
@@ -161,17 +128,6 @@ async def launch_token(
                         f" but the opening buy spends {initial_buy} {symbol}."
                     ),
                 }
-
-        if not uri:
-            try:
-                uri = await upload_metadata(name, ticker, description, image_path)
-            except (RuntimeError, httpx.HTTPError) as exc:
-                return {
-                    "error": "ipfs_failed",
-                    "message": f"{exc}. Host the metadata JSON yourself and pass --uri.",
-                }
-        if not uri:
-            return {"error": "ipfs_failed", "message": "Failed to get metadata URI from IPFS."}
 
         mint_keypair = Keypair()
         mint = mint_keypair.pubkey()

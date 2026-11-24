@@ -1,6 +1,6 @@
-"""Launch: guards run before anything is uploaded or sent, then create (and buy)."""
+"""Launch: guards run before anything is sent, then create (and buy)."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from solders.pubkey import Pubkey
@@ -33,16 +33,14 @@ def _chain(**global_overrides):
     return client
 
 
+URI = "https://example.com/m.json"
+
+
 async def _launch(client, tmp_keystore, **kwargs):
-    upload = AsyncMock(return_value="https://ipfs.io/ipfs/x")
-    with (
-        patch("pumpfun_cli.core.launch.RpcClient", return_value=client),
-        patch("pumpfun_cli.core.launch.upload_metadata", upload),
-    ):
-        result = await launch_token(
-            "http://rpc", tmp_keystore, "testpass", "Name", "TKR", "d", **kwargs
+    with patch("pumpfun_cli.core.launch.RpcClient", return_value=client):
+        return await launch_token(
+            "http://rpc", tmp_keystore, "testpass", "Name", "TKR", URI, **kwargs
         )
-    return result, upload
 
 
 def _pump(client):
@@ -51,10 +49,10 @@ def _pump(client):
 
 async def test_create_only(tmp_keystore):
     client = _chain()
-    result, upload = await _launch(client, tmp_keystore)
+    result = await _launch(client, tmp_keystore)
     assert result["action"] == "launch"
     assert result["quote_symbol"] == "SOL"
-    upload.assert_awaited_once()
+    assert result["metadata_uri"] == URI
     ixs = _pump(client)
     assert [bytes(i.data[:8]) for i in ixs] == [
         CREATE_V2_DISCRIMINATOR,
@@ -65,7 +63,7 @@ async def test_create_only(tmp_keystore):
 
 async def test_create_and_buy_in_one_transaction(tmp_keystore):
     client = _chain()
-    result, _ = await _launch(client, tmp_keystore, initial_buy=0.5, slippage=10)
+    result = await _launch(client, tmp_keystore, initial_buy=0.5, slippage=10)
     assert len(client.sent) == 1
     buy = _pump(client)[-1]
     assert bytes(buy.data[:8]) == BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR
@@ -96,7 +94,7 @@ async def test_custom_quote_with_creator_fee(tmp_keystore):
     user = decrypt_keypair(Path(tmp_keystore), "testpass").pubkey()
     client = _chain()
     client.token_balances[find_ata(user, T22_QUOTE, TOKEN_2022_PROGRAM)] = 10_000_000
-    result, _ = await _launch(
+    result = await _launch(
         client, tmp_keystore, initial_buy=2, quote_mint_str=str(T22_QUOTE), creator_fee_bps=100
     )
     assert result["creator_fee_bps"] == 100
@@ -114,7 +112,7 @@ async def test_custom_quote_with_creator_fee(tmp_keystore):
         ({"quote_mint_str": str(T22_QUOTE), "creator_fee_bps": 900}, "maximum"),
     ],
 )
-async def test_refused_before_upload(tmp_keystore, kwargs, message):
+async def test_refused_before_sending(tmp_keystore, kwargs, message):
     client = _chain()
     client.add_mint(Pubkey.new_unique(), 6)
     with pytest.raises(ValueError, match=message):
@@ -124,56 +122,23 @@ async def test_refused_before_upload(tmp_keystore, kwargs, message):
 
 async def test_holder_reward_disabled(tmp_keystore):
     client = _chain(is_holder_reward_enabled=False)
-    result, upload = await _launch(client, tmp_keystore, is_holder_reward=True)
+    result = await _launch(client, tmp_keystore, is_holder_reward=True)
     assert result["error"] == "holder_reward_disabled"
-    upload.assert_not_awaited()
+    assert client.sent == []
 
 
 async def test_custom_quote_buy_needs_the_asset(tmp_keystore):
     client = _chain()
-    result, upload = await _launch(
-        client, tmp_keystore, initial_buy=2, quote_mint_str=str(T22_QUOTE)
-    )
+    result = await _launch(client, tmp_keystore, initial_buy=2, quote_mint_str=str(T22_QUOTE))
     assert result["error"] == "insufficient_balance"
-    upload.assert_not_awaited()
-
-
-async def test_hosted_uri_skips_the_upload(tmp_keystore):
-    client = _chain()
-    result, upload = await _launch(client, tmp_keystore, uri="https://example.com/m.json")
-    upload.assert_not_awaited()
-    assert result["metadata_uri"] == "https://example.com/m.json"
-    create = _pump(client)[0]
-    assert b"https://example.com/m.json" in bytes(create.data)
-
-
-async def test_refused_upload_points_at_uri(tmp_keystore):
-    client = _chain()
-    with (
-        patch("pumpfun_cli.core.launch.RpcClient", return_value=client),
-        patch(
-            "pumpfun_cli.core.launch.upload_metadata",
-            AsyncMock(side_effect=RuntimeError("Metadata upload to pump.fun failed (HTTP 405)")),
-        ),
-    ):
-        result = await launch_token("http://rpc", tmp_keystore, "testpass", "N", "T", "d")
-    assert result["error"] == "ipfs_failed"
-    assert "--uri" in result["message"]
     assert client.sent == []
 
 
-def test_upload_identifies_itself(respx_mock):
-    import asyncio
-
-    import httpx
-
-    from pumpfun_cli.core.launch import upload_metadata
-
-    route = respx_mock.post("https://pump.fun/api/ipfs").mock(
-        return_value=httpx.Response(200, json={"metadataUri": "https://ipfs.io/ipfs/x"})
-    )
-    assert asyncio.run(upload_metadata("N", "T", "d")) == "https://ipfs.io/ipfs/x"
-    assert route.calls.last.request.headers["user-agent"].startswith("pumpfun-cli")
+async def test_create_carries_the_uri(tmp_keystore):
+    client = _chain()
+    await _launch(client, tmp_keystore)
+    create = _pump(client)[0]
+    assert URI.encode() in bytes(create.data)
 
 
 def test_opening_buy_follows_the_curve():
@@ -185,19 +150,3 @@ def test_opening_buy_follows_the_curve():
     # Constant product: a 5 SOL buy into 30 SOL receives about 14% less than linear.
     assert big < linear_big * 0.87
     assert small > 0
-
-
-async def test_upload_transport_error_points_at_uri(tmp_keystore):
-    import httpx
-
-    client = _chain()
-    with (
-        patch("pumpfun_cli.core.launch.RpcClient", return_value=client),
-        patch(
-            "pumpfun_cli.core.launch.upload_metadata",
-            AsyncMock(side_effect=httpx.ConnectTimeout("timed out")),
-        ),
-    ):
-        result = await launch_token("http://rpc", tmp_keystore, "testpass", "N", "T", "d")
-    assert result["error"] == "ipfs_failed"
-    assert "--uri" in result["message"]
