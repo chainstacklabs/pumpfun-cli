@@ -22,7 +22,7 @@ It is distilled from [pumpfun-bonkfun-bot](https://github.com/chainstacklabs/pum
 
 ---
 
-**🚨 SCAM ALERT**: The Issues section is regularly targeted by scam bots that try to redirect you to an external site and drain your funds. Deleted comments in issues are scam bots after your private keys — genuine outside devs are welcome and appreciated.
+**🚨 SCAM ALERT**: The Issues section is regularly targeted by scam bots that try to redirect you to an external site and drain your funds. Deleted comments in issues are scam bots after your private keys — genuine outside devs are welcome and appreciated. Chainstack has no token and doesn't endorse any. Token addresses in this repo are only examples.
 
 **⚠️ NOT FOR PRODUCTION**: This code is for learning purposes only. We assume no responsibility for the code or its usage. Every trade spends real funds; preview it with `--dry-run` first.
 
